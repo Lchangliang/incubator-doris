@@ -97,6 +97,13 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
         if (!_worker_status[_cur_index].ok()) {
             return _worker_status[_cur_index];
         }
+        {
+            std::unique_lock<std::mutex> ul(_mtx);
+            while (_prefetch_queues[_cur_index]->read_available() == 0) {
+                _cond.wait(ul,
+                           [this] { return _prefetch_queues[_cur_index]->read_available() > 0; });
+            }
+        }
         auto& buffer = _prefetch_queues[_cur_index]->front();
         int64_t buffer_index = position % _buffer_size;
         int64_t rest_bytes = buffer.size() - buffer_index;
@@ -191,6 +198,13 @@ void S3Reader::perfetch_worker(int index) {
         int64_t bytes_read = response.GetResult().GetContentLength();
         std::vector<char> tmp(bytes_read);
         response.GetResult().GetBody().read(tmp.data(), bytes_read);
+        {
+            std::unique_lock<std::mutex> ul(_mtx);
+            while (_prefetch_queues[_cur_index]->write_available() == 0) {
+                _cond.wait(ul,
+                           [this] { return _prefetch_queues[_cur_index]->write_available() > 0; });
+            }
+        }
         queue->push(tmp);
         // bytes_read should equal _buffer_size
         // when bytes_read is less than _buffer_size, the read is in the end.

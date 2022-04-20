@@ -19,8 +19,10 @@
 
 #include <boost/lockfree/policies.hpp>
 #include <boost/lockfree/spsc_queue.hpp>
+#include <condition_variable>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -86,6 +88,8 @@ private:
     size_t _cur_index = 0;
     std::vector<Status> _worker_status;
     std::vector<std::thread> _perfetch_threads;
+    std::mutex _mtx;
+    std::condition_variable _cond;
     using spsc_queue_type =
             boost::lockfree::spsc_queue<std::vector<char>, boost::lockfree::capacity<_capacity>>;
     std::vector<std::shared_ptr<spsc_queue_type>> _prefetch_queues;
