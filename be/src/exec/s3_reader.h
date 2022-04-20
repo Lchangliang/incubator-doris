@@ -17,9 +17,8 @@
 
 #pragma once
 
-#include <boost/lockfree/policies.hpp>
-#include <boost/lockfree/spsc_queue.hpp>
 #include <condition_variable>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -44,11 +43,9 @@ constexpr int64_t PREFETCH_WORKER_NUM = 4;
 constexpr int64_t BUFFER_SIZE = 1 * MB;
 constexpr int64_t SKIP_SIZE = PREFETCH_WORKER_NUM * BUFFER_SIZE;
 constexpr int64_t MAX_PREFETCH_SIZE = 100 * MB;
-constexpr int64_t CAPASITY = MAX_PREFETCH_SIZE / BUFFER_SIZE / PREFETCH_WORKER_NUM;
+constexpr int64_t MAX_QUEUE_SIZE = MAX_PREFETCH_SIZE / BUFFER_SIZE / PREFETCH_WORKER_NUM;
 struct SpscQueue {
-    using spsc_queue_type =
-            boost::lockfree::spsc_queue<std::vector<char>, boost::lockfree::capacity<CAPASITY>>;
-    spsc_queue_type spsc_queue;
+    std::list<std::vector<char>> queue;
     std::mutex mtx;
     std::condition_variable cond;
 };

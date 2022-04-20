@@ -97,33 +97,34 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
         if (!_worker_status[_cur_index].ok()) {
             return _worker_status[_cur_index];
         }
-        auto& queue = _prefetch_queues[_cur_index]->spsc_queue;
+        auto& queue = _prefetch_queues[_cur_index]->queue;
         auto& mtx = _prefetch_queues[_cur_index]->mtx;
         auto& cond = _prefetch_queues[_cur_index]->cond;
         {
             std::unique_lock<std::mutex> ul(mtx);
-            while (queue.read_available() == 0) {
-                cond.wait(ul,
-                           [&] { return queue.read_available() > 0; });
+            while (queue.size() == 0) {
+                cond.wait(ul, [&] { return queue.size() > 0; });
             }
-        }
-        auto& buffer = queue.front();
-        int64_t buffer_index = position % BUFFER_SIZE;
-        int64_t rest_bytes = buffer.size() - buffer_index;
-        if (rest_bytes <= nbytes) {
-            ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
-                     rest_bytes);
-            queue.pop();
-            _cur_index++;
-            *bytes_read += rest_bytes;
-            nbytes -= rest_bytes;
-            position += rest_bytes;
-        } else {
-            nbytes = 0;
-            *bytes_read += nbytes;
-            ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
-                     nbytes);
-            position += nbytes;
+            auto& buffer = queue.front();
+            int64_t buffer_index = position % BUFFER_SIZE;
+            int64_t rest_bytes = buffer.size() - buffer_index;
+            if (rest_bytes <= nbytes) {
+                ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
+                         rest_bytes);
+                queue.pop_front();
+                _cur_index++;
+                *bytes_read += rest_bytes;
+                nbytes -= rest_bytes;
+                position += rest_bytes;
+                LOG(INFO) << "read [" << _cur_index << "] bytes: " << rest_bytes;
+            } else {
+                LOG(INFO) << "read [" << _cur_index << "] bytes: " << nbytes;
+                nbytes = 0;
+                *bytes_read += nbytes;
+                ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
+                         nbytes);
+                position += nbytes;
+            }
         }
     }
     return Status::OK();
@@ -170,14 +171,14 @@ bool S3Reader::closed() {
 void S3Reader::start_perfetch_worker() {
     _worker_status.resize(PREFETCH_WORKER_NUM);
     for (int i = 0; i < PREFETCH_WORKER_NUM; i++) {
-        _prefetch_queues.emplace_back(new SpscQueue);
+        _prefetch_queues.push_back(std::make_shared<SpscQueue>());
         _perfetch_threads.emplace_back(&S3Reader::perfetch_worker, this, i);
     }
 }
 
 void S3Reader::perfetch_worker(int index) {
     int64_t read_offset = index * BUFFER_SIZE;
-    auto& queue = _prefetch_queues[index]->spsc_queue;
+    auto& queue = _prefetch_queues[index]->queue;
     auto& mtx = _prefetch_queues[index]->mtx;
     auto& cond = _prefetch_queues[index]->cond;
     while (true) {
@@ -203,14 +204,14 @@ void S3Reader::perfetch_worker(int index) {
         int64_t bytes_read = response.GetResult().GetContentLength();
         std::vector<char> tmp(bytes_read);
         response.GetResult().GetBody().read(tmp.data(), bytes_read);
+        LOG(INFO) << "[" << index << "] get bytes: " << bytes_read;
         {
             std::unique_lock<std::mutex> ul(mtx);
-            while (queue.write_available() == 0) {
-                cond.wait(ul,
-                           [&] { return queue.write_available() > 0; });
+            while (queue.size() == MAX_QUEUE_SIZE) {
+                cond.wait(ul, [&] { return queue.size() < MAX_QUEUE_SIZE; });
             }
+            queue.push_back(std::move(tmp));
         }
-        queue.push(tmp);
         // bytes_read should equal _buffer_size
         // when bytes_read is less than _buffer_size, the read is in the end.
         read_offset += SKIP_SIZE;
