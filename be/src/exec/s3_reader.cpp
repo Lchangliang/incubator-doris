@@ -97,20 +97,23 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
         if (!_worker_status[_cur_index].ok()) {
             return _worker_status[_cur_index];
         }
+        auto& queue = _prefetch_queues[_cur_index]->spsc_queue;
+        auto& mtx = _prefetch_queues[_cur_index]->mtx;
+        auto& cond = _prefetch_queues[_cur_index]->cond;
         {
-            std::unique_lock<std::mutex> ul(_mtx);
-            while (_prefetch_queues[_cur_index]->read_available() == 0) {
-                _cond.wait(ul,
-                           [this] { return _prefetch_queues[_cur_index]->read_available() > 0; });
+            std::unique_lock<std::mutex> ul(mtx);
+            while (queue.read_available() == 0) {
+                cond.wait(ul,
+                           [&] { return queue.read_available() > 0; });
             }
         }
-        auto& buffer = _prefetch_queues[_cur_index]->front();
-        int64_t buffer_index = position % _buffer_size;
+        auto& buffer = queue.front();
+        int64_t buffer_index = position % BUFFER_SIZE;
         int64_t rest_bytes = buffer.size() - buffer_index;
         if (rest_bytes <= nbytes) {
             ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
                      rest_bytes);
-            _prefetch_queues[_cur_index]->pop();
+            queue.pop();
             _cur_index++;
             *bytes_read += rest_bytes;
             nbytes -= rest_bytes;
@@ -165,16 +168,18 @@ bool S3Reader::closed() {
 }
 
 void S3Reader::start_perfetch_worker() {
-    _worker_status.resize(_prefetch_worker_num);
-    for (int i = 0; i < _prefetch_worker_num; i++) {
-        _prefetch_queues.emplace_back(new spsc_queue_type {});
+    _worker_status.resize(PREFETCH_WORKER_NUM);
+    for (int i = 0; i < PREFETCH_WORKER_NUM; i++) {
+        _prefetch_queues.emplace_back(new SpscQueue);
         _perfetch_threads.emplace_back(&S3Reader::perfetch_worker, this, i);
     }
 }
 
 void S3Reader::perfetch_worker(int index) {
-    int64_t read_offset = index * _buffer_size;
-    auto queue = _prefetch_queues[index];
+    int64_t read_offset = index * BUFFER_SIZE;
+    auto& queue = _prefetch_queues[index]->spsc_queue;
+    auto& mtx = _prefetch_queues[index]->mtx;
+    auto& cond = _prefetch_queues[index]->cond;
     while (true) {
         if (read_offset >= _file_size) {
             break;
@@ -182,8 +187,8 @@ void S3Reader::perfetch_worker(int index) {
         Aws::S3::Model::GetObjectRequest request;
         request.WithBucket(_uri.get_bucket()).WithKey(_uri.get_key());
         string bytes = StrCat("bytes=", read_offset, "-");
-        if (read_offset + _buffer_size < _file_size) {
-            bytes = StrCat(bytes.c_str(), read_offset + _buffer_size - 1);
+        if (read_offset + BUFFER_SIZE < _file_size) {
+            bytes = StrCat(bytes.c_str(), read_offset + BUFFER_SIZE - 1);
         }
         request.SetRange(bytes.c_str());
         auto response = _client->GetObject(request);
@@ -199,16 +204,16 @@ void S3Reader::perfetch_worker(int index) {
         std::vector<char> tmp(bytes_read);
         response.GetResult().GetBody().read(tmp.data(), bytes_read);
         {
-            std::unique_lock<std::mutex> ul(_mtx);
-            while (_prefetch_queues[_cur_index]->write_available() == 0) {
-                _cond.wait(ul,
-                           [this] { return _prefetch_queues[_cur_index]->write_available() > 0; });
+            std::unique_lock<std::mutex> ul(mtx);
+            while (queue.write_available() == 0) {
+                cond.wait(ul,
+                           [&] { return queue.write_available() > 0; });
             }
         }
-        queue->push(tmp);
+        queue.push(tmp);
         // bytes_read should equal _buffer_size
         // when bytes_read is less than _buffer_size, the read is in the end.
-        read_offset += _skip_size;
+        read_offset += SKIP_SIZE;
     }
 }
 

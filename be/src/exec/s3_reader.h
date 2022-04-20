@@ -39,6 +39,19 @@ class S3Client;
 } // namespace Aws
 
 namespace doris {
+
+constexpr int64_t PREFETCH_WORKER_NUM = 4;
+constexpr int64_t BUFFER_SIZE = 1 * MB;
+constexpr int64_t SKIP_SIZE = PREFETCH_WORKER_NUM * BUFFER_SIZE;
+constexpr int64_t MAX_PREFETCH_SIZE = 100 * MB;
+constexpr int64_t CAPASITY = MAX_PREFETCH_SIZE / BUFFER_SIZE / PREFETCH_WORKER_NUM;
+struct SpscQueue {
+    using spsc_queue_type =
+            boost::lockfree::spsc_queue<std::vector<char>, boost::lockfree::capacity<CAPASITY>>;
+    spsc_queue_type spsc_queue;
+    std::mutex mtx;
+    std::condition_variable cond;
+};
 class S3Reader : public FileReader {
 public:
     S3Reader(const std::map<std::string, std::string>& properties, const std::string& path,
@@ -79,19 +92,9 @@ private:
     std::shared_ptr<Aws::S3::S3Client> _client;
 
 private:
-    inline static constexpr int64_t _prefetch_worker_num = 4;
-    inline static constexpr int64_t _buffer_size = 1 * MB;
-    inline static constexpr int64_t _skip_size = _prefetch_worker_num * _buffer_size;
-    inline static constexpr int64_t _max_prefetch_size = 100 * MB;
-    inline static constexpr int64_t _capacity =
-            _max_prefetch_size / _buffer_size / _prefetch_worker_num;
     size_t _cur_index = 0;
     std::vector<Status> _worker_status;
     std::vector<std::thread> _perfetch_threads;
-    std::mutex _mtx;
-    std::condition_variable _cond;
-    using spsc_queue_type =
-            boost::lockfree::spsc_queue<std::vector<char>, boost::lockfree::capacity<_capacity>>;
-    std::vector<std::shared_ptr<spsc_queue_type>> _prefetch_queues;
+    std::vector<std::shared_ptr<SpscQueue>> _prefetch_queues;
 };
 } // end namespace doris
