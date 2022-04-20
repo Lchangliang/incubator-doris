@@ -21,7 +21,9 @@
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/HeadObjectRequest.h>
 
+#include "common/config.h"
 #include "common/logging.h"
+#include "common/status.h"
 #include "gutil/strings/strcat.h"
 #include "service/backend_options.h"
 #include "util/s3_util.h"
@@ -47,8 +49,6 @@ S3Reader::S3Reader(const std::map<std::string, std::string>& properties, const s
     DCHECK(_client) << "init aws s3 client error.";
 }
 
-S3Reader::~S3Reader() {}
-
 Status S3Reader::open() {
     CHECK_S3_CLIENT(_client);
     if (!_uri.parse()) {
@@ -59,6 +59,7 @@ Status S3Reader::open() {
     Aws::S3::Model::HeadObjectOutcome response = _client->HeadObject(request);
     if (response.IsSuccess()) {
         _file_size = response.GetResult().GetContentLength();
+        start_perfetch_worker();
         return Status::OK();
     } else if (response.GetError().GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND) {
         return Status::NotFound(_path + " not exists!");
@@ -83,31 +84,38 @@ Status S3Reader::read(uint8_t* buf, int64_t buf_len, int64_t* bytes_read, bool* 
 
 Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, void* out) {
     CHECK_S3_CLIENT(_client);
-    if (position >= _file_size) {
-        *bytes_read = 0;
-        VLOG_FILE << "Read end of file: " + _path;
-        return Status::OK();
+    *bytes_read = 0;
+    while (true) {
+        if (position >= _file_size) {
+            *bytes_read = 0;
+            VLOG_FILE << "Read end of file: " + _path;
+            return Status::OK();
+        }
+        if (nbytes == 0) {
+            break;
+        }
+        if (!_worker_status[_cur_index].ok()) {
+            return _worker_status[_cur_index];
+        }
+        auto& buffer = _prefetch_queues[_cur_index]->front();
+        int64_t buffer_index = position % _buffer_size;
+        int64_t rest_bytes = buffer.size() - buffer_index;
+        if (rest_bytes <= nbytes) {
+            ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
+                     rest_bytes);
+            _prefetch_queues[_cur_index]->pop();
+            _cur_index++;
+            *bytes_read += rest_bytes;
+            nbytes -= rest_bytes;
+            position += rest_bytes;
+        } else {
+            nbytes = 0;
+            *bytes_read += nbytes;
+            ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
+                     nbytes);
+            position += nbytes;
+        }
     }
-    Aws::S3::Model::GetObjectRequest request;
-    request.WithBucket(_uri.get_bucket()).WithKey(_uri.get_key());
-    string bytes = StrCat("bytes=", position, "-");
-    if (position + nbytes < _file_size) {
-        bytes = StrCat(bytes.c_str(), position + nbytes - 1);
-    }
-    request.SetRange(bytes.c_str());
-    auto response = _client->GetObject(request);
-    if (!response.IsSuccess()) {
-        *bytes_read = 0;
-        std::stringstream out;
-        out << "Error: [" << response.GetError().GetExceptionName() << ":"
-            << response.GetError().GetMessage() << "] at " << BackendOptions::get_localhost();
-        LOG(INFO) << out.str();
-        return Status::InternalError(out.str());
-    }
-    *bytes_read = response.GetResult().GetContentLength();
-    *bytes_read = nbytes < *bytes_read ? nbytes : *bytes_read;
-    _cur_offset = position + *bytes_read;
-    response.GetResult().GetBody().read((char*)out, *bytes_read);
     return Status::OK();
 }
 
@@ -139,11 +147,55 @@ Status S3Reader::tell(int64_t* position) {
 }
 
 void S3Reader::close() {
+    for (auto& thread : _perfetch_threads) {
+        thread.join();
+    }
     _closed = true;
 }
 
 bool S3Reader::closed() {
     return _closed;
+}
+
+void S3Reader::start_perfetch_worker() {
+    _worker_status.resize(_prefetch_worker_num);
+    for (int i = 0; i < _prefetch_worker_num; i++) {
+        _prefetch_queues.emplace_back(new spsc_queue_type {});
+        _perfetch_threads.emplace_back(&S3Reader::perfetch_worker, this, i);
+    }
+}
+
+void S3Reader::perfetch_worker(int index) {
+    int64_t read_offset = index * _buffer_size;
+    auto queue = _prefetch_queues[index];
+    while (true) {
+        if (read_offset >= _file_size) {
+            break;
+        }
+        Aws::S3::Model::GetObjectRequest request;
+        request.WithBucket(_uri.get_bucket()).WithKey(_uri.get_key());
+        string bytes = StrCat("bytes=", read_offset, "-");
+        if (read_offset + _buffer_size < _file_size) {
+            bytes = StrCat(bytes.c_str(), read_offset + _buffer_size - 1);
+        }
+        request.SetRange(bytes.c_str());
+        auto response = _client->GetObject(request);
+        if (!response.IsSuccess()) {
+            std::stringstream out;
+            out << "Error: [" << response.GetError().GetExceptionName() << ":"
+                << response.GetError().GetMessage() << "] at " << BackendOptions::get_localhost();
+            LOG(INFO) << out.str();
+            _worker_status[index] = Status::InternalError(out.str());
+            break;
+        }
+        int64_t bytes_read = response.GetResult().GetContentLength();
+        std::vector<char> tmp(bytes_read);
+        response.GetResult().GetBody().read(tmp.data(), bytes_read);
+        queue->push(tmp);
+        // bytes_read should equal _buffer_size
+        // when bytes_read is less than _buffer_size, the read is in the end.
+        read_offset += _skip_size;
+    }
 }
 
 } // end namespace doris

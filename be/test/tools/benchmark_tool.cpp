@@ -58,8 +58,6 @@
 #include "util/debug_util.h"
 #include "util/file_utils.h"
 
-#define MB 1048576
-
 DEFINE_string(operation, "Custom",
               "valid operation: Custom, BinaryDictPageEncode, BinaryDictPageDecode, SegmentScan, "
               "SegmentWrite, "
@@ -590,6 +588,7 @@ public:
     void run() override {
         bool eof = false;
         int64_t byte_read = 0;
+        _buffer.resize(1 * MB);
         while (!eof) {
             auto status = _reader.read(reinterpret_cast<uint8_t*>(_buffer.data()),
                                        _buffer.max_size(), &byte_read, &eof);
@@ -601,7 +600,7 @@ public:
 
 private:
     S3Reader _reader;
-    std::array<char, 1 * MB> _buffer;
+    std::vector<char> _buffer;
 };
 
 class MultiBenchmark {
@@ -644,13 +643,13 @@ public:
         } else if (equal_ignore_case(FLAGS_operation, "S3Reader")) {
             std::map<std::string, std::string> properties = {
                     {"AWS_ACCESS_KEY", FLAGS_ak},   {"AWS_ENDPOINT", FLAGS_endpoint},
-                    {"AWS_REGION", FLAGS_region},   {"AWS_SELECT_KEY", FLAGS_sk},
+                    {"AWS_REGION", FLAGS_region},   {"AWS_SECRET_KEY", FLAGS_sk},
                     {"_DORIS_STORAGE_TYPE_", "S3"},
             };
-            std::string path = "s3://" + FLAGS_data_file;
             int64_t start_offset = 0;
-            benchmarks.emplace_back(new doris::S3ReaderBenchmark(
-                    FLAGS_operation, std::stoi(FLAGS_iterations), properties, path, start_offset));
+            benchmarks.emplace_back(
+                    new doris::S3ReaderBenchmark(FLAGS_operation, std::stoi(FLAGS_iterations),
+                                                 properties, FLAGS_data_file, start_offset));
         } else {
             std::cout << "operation invalid!" << std::endl;
         }
