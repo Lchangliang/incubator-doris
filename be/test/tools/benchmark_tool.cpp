@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -31,6 +32,7 @@
 
 #include "common/compiler_util.h"
 #include "common/logging.h"
+#include "exec/s3_reader.h"
 #include "gutil/strings/split.h"
 #include "gutil/strings/substitute.h"
 #include "olap/comparison_predicate.h"
@@ -56,6 +58,8 @@
 #include "util/debug_util.h"
 #include "util/file_utils.h"
 
+#define MB 1048576
+
 DEFINE_string(operation, "Custom",
               "valid operation: Custom, BinaryDictPageEncode, BinaryDictPageDecode, SegmentScan, "
               "SegmentWrite, "
@@ -65,6 +69,12 @@ DEFINE_string(column_type, "int,varchar", "valid type: int, char, varchar, strin
 DEFINE_string(rows_number, "10000", "rows number");
 DEFINE_string(iterations, "10",
               "run times, this is set to 0 means the number of iterations is automatically set ");
+
+DEFINE_string(ak, "", "S3 AK");
+DEFINE_string(sk, "", "S3 SK");
+DEFINE_string(endpoint, "", "S3 endpoint");
+DEFINE_string(region, "", "S3 region");
+DEFINE_string(data_file, "", "S3 bucket");
 
 const std::string kSegmentDir = "./segment_benchmark";
 
@@ -567,6 +577,33 @@ void custom_run_mod() {
     }
 }
 
+class S3ReaderBenchmark : public BaseBenchmark {
+public:
+    S3ReaderBenchmark(const std::string& name, int iterations,
+                      const std::map<std::string, std::string>& properties, const std::string& path,
+                      int64_t start_offset)
+            : BaseBenchmark(name, iterations), _reader(properties, path, start_offset) {}
+    ~S3ReaderBenchmark() override = default;
+
+    void init() override { _reader.open(); }
+
+    void run() override {
+        bool eof = false;
+        int64_t byte_read = 0;
+        while (!eof) {
+            auto status = _reader.read(reinterpret_cast<uint8_t*>(_buffer.data()),
+                                       _buffer.max_size(), &byte_read, &eof);
+            if (!status.ok()) {
+                LOG(ERROR) << status.get_error_msg();
+            }
+        }
+    }
+
+private:
+    S3Reader _reader;
+    std::array<char, 1 * MB> _buffer;
+};
+
 class MultiBenchmark {
 public:
     MultiBenchmark() {}
@@ -604,6 +641,16 @@ public:
         } else if (equal_ignore_case(FLAGS_operation, "SegmentWriteByFile")) {
             benchmarks.emplace_back(new doris::SegmentWriteByFileBenchmark(
                     FLAGS_operation, std::stoi(FLAGS_iterations), FLAGS_input_file));
+        } else if (equal_ignore_case(FLAGS_operation, "S3Reader")) {
+            std::map<std::string, std::string> properties = {
+                    {"AWS_ACCESS_KEY", FLAGS_ak},   {"AWS_ENDPOINT", FLAGS_endpoint},
+                    {"AWS_REGION", FLAGS_region},   {"AWS_SELECT_KEY", FLAGS_sk},
+                    {"_DORIS_STORAGE_TYPE_", "S3"},
+            };
+            std::string path = "s3://" + FLAGS_data_file;
+            int64_t start_offset = 0;
+            benchmarks.emplace_back(new doris::S3ReaderBenchmark(
+                    FLAGS_operation, std::stoi(FLAGS_iterations), properties, path, start_offset));
         } else {
             std::cout << "operation invalid!" << std::endl;
         }
