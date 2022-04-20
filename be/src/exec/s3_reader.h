@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <array>
 #include <condition_variable>
 #include <list>
 #include <map>
@@ -92,6 +93,6 @@ private:
     size_t _cur_index = 0;
     std::vector<Status> _worker_status;
     std::vector<std::thread> _perfetch_threads;
-    std::vector<std::shared_ptr<SpscQueue>> _prefetch_queues;
+    std::array<SpscQueue, PREFETCH_WORKER_NUM> _prefetch_queues;
 };
 } // end namespace doris
