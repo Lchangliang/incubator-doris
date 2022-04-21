@@ -74,7 +74,7 @@ Status S3Reader::open() {
 Status S3Reader::read(uint8_t* buf, int64_t buf_len, int64_t* bytes_read, bool* eof) {
     DCHECK_NE(buf_len, 0);
     RETURN_IF_ERROR(readat(_cur_offset, buf_len, bytes_read, buf));
-    if (*bytes_read == 0) {
+    if (_cur_offset >= _file_size) {
         *eof = true;
     } else {
         *eof = false;
@@ -87,8 +87,8 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
     *bytes_read = 0;
     while (true) {
         if (position >= _file_size) {
-            *bytes_read = 0;
             VLOG_FILE << "Read end of file: " + _path;
+            _cur_offset = position;
             return Status::OK();
         }
         if (nbytes == 0) {
@@ -206,7 +206,6 @@ void S3Reader::perfetch_worker(int64_t index) {
         int64_t bytes_read = response.GetResult().GetContentLength();
         std::vector<char> tmp(bytes_read);
         response.GetResult().GetBody().read(tmp.data(), bytes_read);
-        LOG(INFO) << "[" << index << "] get bytes: " << bytes_read;
         {
             std::unique_lock<std::mutex> ul(mtx);
             while (queue.size() == MAX_QUEUE_SIZE) {
