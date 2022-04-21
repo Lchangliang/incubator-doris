@@ -590,17 +590,17 @@ public:
     void init() override {}
 
     void run() override {
-        S3Reader _reader(_properties, _path, _start_offset);
-        _reader.open();
+        S3Reader reader(_properties, _path, _start_offset);
+        reader.open();
         bool eof = false;
         int64_t bytes_read = 0;
         std::vector<char> buffer;
         buffer.resize(1 * MB);
         int64_t start_time = MonotonicNanos();
-        int total_bytes = 0;
+        int64_t total_bytes = 0;
         while (!eof) {
-            auto status = _reader.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer.size(),
-                                       &bytes_read, &eof);
+            auto status = reader.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer.size(),
+                                      &bytes_read, &eof);
             total_bytes += bytes_read;
             if (!status.ok()) {
                 LOG(ERROR) << status.get_error_msg();
@@ -608,7 +608,7 @@ public:
         }
         LOG(INFO) << "read bytes: " << total_bytes
                   << " use time: " << MonotonicNanos() - start_time;
-        _reader.close();
+        reader.close();
     }
 
 private:
