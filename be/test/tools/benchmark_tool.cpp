@@ -57,6 +57,7 @@
 #include "testutil/test_util.h"
 #include "util/debug_util.h"
 #include "util/file_utils.h"
+#include "util/time.h"
 
 DEFINE_string(operation, "Custom",
               "valid operation: Custom, BinaryDictPageEncode, BinaryDictPageDecode, SegmentScan, "
@@ -592,23 +593,28 @@ public:
         S3Reader _reader(_properties, _path, _start_offset);
         _reader.open();
         bool eof = false;
-        int64_t byte_read = 0;
-        _buffer.resize(1 * MB);
+        int64_t bytes_read = 0;
+        std::vector<char> buffer;
+        buffer.resize(1 * MB);
+        int64_t start_time = MonotonicNanos();
+        int total_bytes = 0;
         while (!eof) {
-            auto status = _reader.read(reinterpret_cast<uint8_t*>(_buffer.data()), _buffer.size(),
-                                       &byte_read, &eof);
+            auto status = _reader.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer.size(),
+                                       &bytes_read, &eof);
+            total_bytes += bytes_read;
             if (!status.ok()) {
                 LOG(ERROR) << status.get_error_msg();
             }
         }
+        LOG(INFO) << "read bytes: " << total_bytes
+                  << " use time: " << MonotonicNanos() - start_time;
         _reader.close();
     }
 
 private:
-    const std::map<std::string, std::string>& _properties;
-    const std::string& _path;
+    std::map<std::string, std::string> _properties;
+    std::string _path;
     int64_t _start_offset;
-    std::vector<char> _buffer;
 };
 
 class MultiBenchmark {
