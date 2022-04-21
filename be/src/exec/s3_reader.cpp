@@ -20,6 +20,7 @@
 #include <aws/s3/S3Client.h>
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/HeadObjectRequest.h>
+#include <cstddef>
 
 #include "common/config.h"
 #include "common/logging.h"
@@ -89,7 +90,7 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
         if (position >= _file_size) {
             VLOG_FILE << "Read end of file: " + _path;
             _cur_offset = position;
-            return Status::OK();
+            break;
         }
         if (nbytes == 0) {
             break;
@@ -119,11 +120,11 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
                 nbytes -= rest_bytes;
                 position += rest_bytes;
             } else {
-                nbytes = 0;
-                *bytes_read += nbytes;
                 ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
                          nbytes);
+                *bytes_read += nbytes;
                 position += nbytes;
+                nbytes = 0;
             }
         }
     }
@@ -149,6 +150,10 @@ int64_t S3Reader::size() {
 }
 
 Status S3Reader::seek(int64_t position) {
+    if (UNLIKELY(position < _cur_offset)) {
+        return Status::InternalError("S3Reader cannot read already-read data");
+    }
+    skip_data(_cur_offset, position - _cur_offset);
     _cur_offset = position;
     return Status::OK();
 }
@@ -159,11 +164,14 @@ Status S3Reader::tell(int64_t* position) {
 }
 
 void S3Reader::close() {
+    skip_data(_cur_offset, _file_size - _cur_offset);
+    _cur_offset = _file_size;
     for (auto& thread : _perfetch_threads) {
         if (thread.joinable()) {
             thread.join();
         }
     }
+    _client = nullptr;
     _closed = true;
 }
 
@@ -214,10 +222,48 @@ void S3Reader::perfetch_worker(int64_t index) {
             queue.push_back(std::move(tmp));
             cond.notify_one();
         }
-        // bytes_read should equal _buffer_size
-        // when bytes_read is less than _buffer_size, the read is in the end.
+        // bytes_read should equal BUFFER_SIZE
+        // when bytes_read is less than BUFFER_SIZE, the read is in the end.
         read_offset += SKIP_SIZE;
     }
+}
+
+Status S3Reader::skip_data(int64_t position, int64_t nbytes) {
+    while (true) {
+        if (position >= _file_size) {
+            break;
+        }
+        if (nbytes == 0) {
+            break;
+        }
+        _cur_index %= PREFETCH_WORKER_NUM;
+        if (!_worker_status[_cur_index].ok()) {
+            return _worker_status[_cur_index];
+        }
+        auto& queue = _prefetch_queues[_cur_index].queue;
+        auto& mtx = _prefetch_queues[_cur_index].mtx;
+        auto& cond = _prefetch_queues[_cur_index].cond;
+        {
+            std::unique_lock<std::mutex> ul(mtx);
+            while (queue.size() == 0) {
+                cond.wait(ul, [&] { return queue.size() > 0; });
+            }
+            auto& buffer = queue.front();
+            int64_t buffer_index = position % BUFFER_SIZE;
+            int64_t rest_bytes = buffer.size() - buffer_index;
+            if (rest_bytes <= nbytes) {
+                queue.pop_front();
+                cond.notify_one();
+                _cur_index++;
+                nbytes -= rest_bytes;
+                position += rest_bytes;
+            } else {
+                position += nbytes;
+                nbytes = 0;
+            }
+        }
+    }
+    return Status::OK();
 }
 
 } // end namespace doris

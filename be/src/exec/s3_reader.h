@@ -50,6 +50,9 @@ struct SpscQueue {
     std::mutex mtx;
     std::condition_variable cond;
 };
+/* 
+ * Because objects are read in advance using multiple threads, S3Reader can only be read sequentially.
+ */
 class S3Reader : public FileReader {
 public:
     S3Reader(const std::map<std::string, std::string>& properties, const std::string& path,
@@ -79,9 +82,12 @@ public:
 private:
     void start_perfetch_worker();
     void perfetch_worker(int64_t index);
+    // When call seek, consumer should skip the perfetch data.
+    // Or if there's any data left over when close, skip it too.
+    Status skip_data(int64_t position, int64_t nbytes);
 
 private:
-    const std::map<std::string, std::string>& _properties;
+    std::map<std::string, std::string> _properties;
     std::string _path;
     S3URI _uri;
     int64_t _cur_offset;

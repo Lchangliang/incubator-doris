@@ -593,8 +593,9 @@ arrow::Result<int64_t> ParquetFile::GetSize() {
 }
 
 arrow::Status ParquetFile::Seek(int64_t position) {
+    LOG(INFO) << "ParquetFile seek: " << position;
     _pos = position;
-    // NOTE: Only readat operation is used, so _file seek is not called here.
+    _file->seek(position);
     return arrow::Status::OK();
 }
 
