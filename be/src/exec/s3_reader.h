@@ -78,7 +78,7 @@ public:
 
 private:
     void start_perfetch_worker();
-    void perfetch_worker(int index);
+    void perfetch_worker(int64_t index);
 
 private:
     const std::map<std::string, std::string>& _properties;

@@ -94,6 +94,7 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
         if (nbytes == 0) {
             break;
         }
+        _cur_index %= PREFETCH_WORKER_NUM;
         if (!_worker_status[_cur_index].ok()) {
             return _worker_status[_cur_index];
         }
@@ -112,13 +113,12 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
                 ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
                          rest_bytes);
                 queue.pop_front();
+                cond.notify_one();
                 _cur_index++;
                 *bytes_read += rest_bytes;
                 nbytes -= rest_bytes;
                 position += rest_bytes;
-                LOG(INFO) << "read [" << _cur_index << "] bytes: " << rest_bytes;
             } else {
-                LOG(INFO) << "read [" << _cur_index << "] bytes: " << nbytes;
                 nbytes = 0;
                 *bytes_read += nbytes;
                 ::memcpy(reinterpret_cast<char*>(out) + *bytes_read, buffer.data() + buffer_index,
@@ -127,6 +127,7 @@ Status S3Reader::readat(int64_t position, int64_t nbytes, int64_t* bytes_read, v
             }
         }
     }
+    _cur_offset = position;
     return Status::OK();
 }
 
@@ -159,7 +160,9 @@ Status S3Reader::tell(int64_t* position) {
 
 void S3Reader::close() {
     for (auto& thread : _perfetch_threads) {
-        thread.join();
+        if (thread.joinable()) {
+            thread.join();
+        }
     }
     _closed = true;
 }
@@ -210,6 +213,7 @@ void S3Reader::perfetch_worker(int64_t index) {
                 cond.wait(ul, [&] { return queue.size() < MAX_QUEUE_SIZE; });
             }
             queue.push_back(std::move(tmp));
+            cond.notify_one();
         }
         // bytes_read should equal _buffer_size
         // when bytes_read is less than _buffer_size, the read is in the end.

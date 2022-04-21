@@ -580,26 +580,34 @@ public:
     S3ReaderBenchmark(const std::string& name, int iterations,
                       const std::map<std::string, std::string>& properties, const std::string& path,
                       int64_t start_offset)
-            : BaseBenchmark(name, iterations), _reader(properties, path, start_offset) {}
+            : BaseBenchmark(name, iterations),
+              _properties(properties),
+              _path(path),
+              _start_offset(start_offset) {}
     ~S3ReaderBenchmark() override = default;
 
-    void init() override { _reader.open(); }
+    void init() override {}
 
     void run() override {
+        S3Reader _reader(_properties, _path, _start_offset);
+        _reader.open();
         bool eof = false;
         int64_t byte_read = 0;
         _buffer.resize(1 * MB);
         while (!eof) {
-            auto status = _reader.read(reinterpret_cast<uint8_t*>(_buffer.data()),
-                                       _buffer.max_size(), &byte_read, &eof);
+            auto status = _reader.read(reinterpret_cast<uint8_t*>(_buffer.data()), _buffer.size(),
+                                       &byte_read, &eof);
             if (!status.ok()) {
                 LOG(ERROR) << status.get_error_msg();
             }
         }
+        _reader.close();
     }
 
 private:
-    S3Reader _reader;
+    const std::map<std::string, std::string>& _properties;
+    const std::string& _path;
+    int64_t _start_offset;
     std::vector<char> _buffer;
 };
 
