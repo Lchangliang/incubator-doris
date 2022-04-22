@@ -102,6 +102,7 @@ set(EXEC_FILES
     json_scanner.cpp
     assert_num_rows_node.cpp
     s3_reader.cpp
+    s3_sequential_reader.cpp
     s3_writer.cpp
     hdfs_reader_writer.cpp
 )

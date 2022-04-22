@@ -16,12 +16,24 @@
 // under the License.
 
 #pragma once
+#include <aws/core/utils/memory/stl/AWSStreamFwd.h>
+#include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 
+#include <array>
+#include <atomic>
+#include <condition_variable>
+#include <list>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "exec/file_reader.h"
 #include "util/s3_uri.h"
+
+constexpr int MB = 1 << 20;
 
 namespace Aws {
 namespace S3 {
@@ -30,19 +42,33 @@ class S3Client;
 } // namespace Aws
 
 namespace doris {
-class S3Reader : public FileReader {
+
+constexpr int64_t PREFETCH_WORKER_NUM = 4;
+constexpr int64_t BUFFER_SIZE = 1 * MB;
+constexpr int64_t SKIP_SIZE = PREFETCH_WORKER_NUM * BUFFER_SIZE;
+constexpr int64_t MAX_PREFETCH_SIZE = 100 * MB;
+constexpr int64_t MAX_QUEUE_SIZE = MAX_PREFETCH_SIZE / BUFFER_SIZE / PREFETCH_WORKER_NUM;
+struct SpscQueue {
+    std::list<std::vector<char>> queue;
+    std::mutex mtx;
+    std::condition_variable cond;
+};
+
+/* 
+ * Because objects are read in advance using multiple threads, S3Reader can only be read sequentially.
+ */
+class S3SequentialReader : public FileReader {
 public:
-    S3Reader(const std::map<std::string, std::string>& properties, const std::string& path,
-             int64_t start_offset);
-    ~S3Reader() override = default;
+    S3SequentialReader(const std::map<std::string, std::string>& properties,
+                       const std::string& path, int64_t start_offset);
+    ~S3SequentialReader() override = default;
     Status open() override;
     // Read content to 'buf', 'buf_len' is the max size of this buffer.
     // Return ok when read success, and 'buf_len' is set to size of read content
     // If reach to end of file, the eof is set to true. meanwhile 'buf_len'
     // is set to zero.
     Status read(uint8_t* buf, int64_t buf_len, int64_t* bytes_read, bool* eof) override;
-    Status readat(int64_t position, int64_t nbytes, int64_t* bytes_read,
-                          void* out) override;
+    Status readat(int64_t position, int64_t nbytes, int64_t* bytes_read, void* out) override;
 
     /**
      * This interface is used read a whole message, For example: read a message from kafka.
@@ -58,12 +84,22 @@ public:
     bool closed() override;
 
 private:
+    void start_perfetch_worker();
+    void perfetch_worker(int64_t index);
+
+private:
     std::map<std::string, std::string> _properties;
     std::string _path;
     S3URI _uri;
     int64_t _cur_offset;
     int64_t _file_size;
-    bool _closed;
+    std::atomic_bool _closed = false;
     std::shared_ptr<Aws::S3::S3Client> _client;
+
+private:
+    size_t _cur_index = 0;
+    std::vector<Status> _worker_status;
+    std::vector<std::thread> _perfetch_threads;
+    std::array<SpscQueue, PREFETCH_WORKER_NUM> _prefetch_queues;
 };
 } // end namespace doris

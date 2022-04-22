@@ -29,7 +29,7 @@
 #include "exec/local_file_reader.h"
 #include "exec/plain_binary_line_reader.h"
 #include "exec/plain_text_line_reader.h"
-#include "exec/s3_reader.h"
+#include "exec/s3_sequential_reader.h"
 #include "exec/text_converter.h"
 #include "exec/text_converter.hpp"
 #include "exprs/expr.h"
@@ -195,8 +195,8 @@ Status BrokerScanner::open_file_reader() {
         break;
     }
     case TFileType::FILE_S3: {
-        BufferedReader* s3_reader = new BufferedReader(
-                _profile, new S3Reader(_params.properties, range.path, start_offset));
+        LOG(INFO) << "[BrokerScan] start_offset: " << start_offset;
+        FileReader* s3_reader = new S3SequentialReader(_params.properties, range.path, start_offset);
         RETURN_IF_ERROR(s3_reader->open());
         _cur_file_reader = s3_reader;
         break;
