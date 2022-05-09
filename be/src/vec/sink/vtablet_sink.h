@@ -36,6 +36,8 @@ public:
 
     Status init(RuntimeState* state) override;
 
+    void open() override;
+
     Status open_wait() override;
 
     Status add_row(const BlockRow& block_row, int64_t tablet_id) override;
@@ -52,6 +54,10 @@ public:
     // 2. just cancel()
     void mark_close() override;
 
+    Status close_wait(RuntimeState* state) override;
+
+    void cancel(const std::string& cancel_msg) override;
+
 protected:
     void _close_check() override;
 
@@ -62,7 +68,11 @@ private:
     using AddBlockReq =
             std::pair<std::unique_ptr<vectorized::MutableBlock>, PTabletWriterAddBlockRequest>;
     std::queue<AddBlockReq> _pending_blocks;
-    ReusableClosure<PTabletWriterAddBlockResult>* _add_block_closure = nullptr;
+    // ReusableClosure<PTabletWriterAddBlockResult>* _add_block_closure = nullptr;
+    std::unique_ptr<PBackendService_Stub> _streaming_stub = nullptr;
+    brpc::Channel _channel;
+    brpc::StreamId _stream_id;
+    butil::IOBuf _stream_msg;
 
     // This buffer is used to store the serialized block data
     // The data in the buffer is copied to the attachment of the brpc when it is sent,

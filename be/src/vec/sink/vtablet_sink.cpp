@@ -17,6 +17,7 @@
 
 #include "vec/sink/vtablet_sink.h"
 
+#include "exec/tablet_sink.h"
 #include "runtime/thread_context.h"
 #include "util/doris_metrics.h"
 #include "vec/core/block.h"
@@ -25,7 +26,7 @@
 #include "util/debug/sanitizer_scopes.h"
 #include "util/time.h"
 #include "util/proto_util.h"
-
+#include <util/defer_op.h>
 namespace doris {
 namespace stream_load {
 
@@ -51,6 +52,16 @@ void VNodeChannel::clear_all_blocks() {
 Status VNodeChannel::init(RuntimeState* state) {
     RETURN_IF_ERROR(NodeChannel::init(state));
 
+    brpc::ChannelOptions options;
+    options.timeout_ms = 0x7fffffff;
+    options.protocol = brpc::PROTOCOL_BAIDU_STD;
+    if (_channel.Init(_node_info.host.c_str(), _node_info.brpc_port, nullptr) != 0) {
+        LOG(ERROR) << "Fail to initialize channel";
+        return Status::InternalError("Fail to initialize channel");
+    }
+
+    _streaming_stub = std::make_unique<PBackendService_Stub>(&_channel);
+
     _cur_mutable_block.reset(new vectorized::MutableBlock({_tuple_desc}));
 
     // Initialize _cur_add_block_request
@@ -65,74 +76,91 @@ Status VNodeChannel::init(RuntimeState* state) {
     return Status::OK();
 }
 
+void VNodeChannel::open() {
+    NodeChannel::open();
+
+    brpc::Controller cntl;
+    brpc::StreamOptions options;
+    options.max_buf_size = 10 * 1024 * 1024;
+    if (brpc::StreamCreate(&_stream_id, cntl, &options) != 0) {
+        LOG(ERROR) << "Fail to create stream";
+    }
+    PTabletWriterAddBlockRequest add_batch_request = _cur_add_block_request;
+    add_batch_request.set_packet_seq(0);
+    PTabletWriterAddBlockResult add_batch_result;
+    _streaming_stub->tablet_writer_add_block(&cntl, &add_batch_request, &add_batch_result, nullptr);
+    if (cntl.Failed()) {
+        LOG(ERROR) << "Fail to connect stream, " << cntl.ErrorText();
+    }
+}
+
 Status VNodeChannel::open_wait() {
     Status status = NodeChannel::open_wait();
     if (!status.ok()) {
         return status;
     }
-
-    // add block closure
-    _add_block_closure = ReusableClosure<PTabletWriterAddBlockResult>::create();
-    _add_block_closure->addFailedHandler([this](bool is_last_rpc) {
-        std::lock_guard<std::mutex> l(this->_closed_lock);
-        if (this->_is_closed) {
-            // if the node channel is closed, no need to call `mark_as_failed`,
-            // and notice that _index_channel may already be destroyed.
-            return;
-        }
-        // If rpc failed, mark all tablets on this node channel as failed
-        _index_channel->mark_as_failed(this->node_id(), this->host(),
-                                       _add_block_closure->cntl.ErrorText(), -1);
-        Status st = _index_channel->check_intolerable_failure();
-        if (!st.ok()) {
-            _cancel_with_msg(fmt::format("{}, err: {}", channel_info(), st.get_error_msg()));
-        } else if (is_last_rpc) {
-            // if this is last rpc, will must set _add_batches_finished. otherwise, node channel's close_wait
-            // will be blocked.
-            _add_batches_finished = true;
-        }
-    });
-
-    _add_block_closure->addSuccessHandler([this](const PTabletWriterAddBlockResult& result,
-                                                 bool is_last_rpc) {
-        std::lock_guard<std::mutex> l(this->_closed_lock);
-        if (this->_is_closed) {
-            // if the node channel is closed, no need to call the following logic,
-            // and notice that _index_channel may already be destroyed.
-            return;
-        }
-        Status status(result.status());
-        if (status.ok()) {
-            // if has error tablet, handle them first
-            for (auto& error : result.tablet_errors()) {
-                _index_channel->mark_as_failed(this->node_id(), this->host(), error.msg(),
-                                               error.tablet_id());
-            }
-
-            Status st = _index_channel->check_intolerable_failure();
-            if (!st.ok()) {
-                _cancel_with_msg(st.get_error_msg());
-            } else if (is_last_rpc) {
-                for (auto& tablet : result.tablet_vec()) {
-                    TTabletCommitInfo commit_info;
-                    commit_info.tabletId = tablet.tablet_id();
-                    commit_info.backendId = _node_id;
-                    _tablet_commit_infos.emplace_back(std::move(commit_info));
-                }
-                _add_batches_finished = true;
-            }
-        } else {
-            _cancel_with_msg(fmt::format("{}, add batch req success but status isn't ok, err: {}",
-                                         channel_info(), status.get_error_msg()));
-        }
-
-        if (result.has_execution_time_us()) {
-            _add_batch_counter.add_batch_execution_time_us += result.execution_time_us();
-            _add_batch_counter.add_batch_wait_execution_time_us += result.wait_execution_time_us();
-            _add_batch_counter.add_batch_num++;
-        }
-    });
     return status;
+}
+
+Status VNodeChannel::close_wait(RuntimeState* state) {
+    SCOPED_SWITCH_THREAD_LOCAL_MEM_TRACKER(_node_channel_tracker);
+    // set _is_closed to true finally
+    Defer set_closed {[&]() {
+        std::lock_guard<std::mutex> l(_closed_lock);
+        _is_closed = true;
+    }};
+
+    auto st = none_of({_cancelled, !_eos_is_produced});
+    if (!st.ok()) {
+        if (_cancelled) {
+            std::lock_guard<SpinLock> l(_cancel_msg_lock);
+            return Status::InternalError("wait close failed. " + _cancel_msg);
+        } else {
+            return st.clone_and_prepend(
+                    "already stopped, skip waiting for close. cancelled/!eos: ");
+        }
+    }
+
+    // waiting for finished, it may take a long time, so we couldn't set a timeout
+    while (!_add_batches_finished && !_cancelled) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    brpc::StreamWait(_stream_id, nullptr);
+    for (auto& tablet : _index_channel->_tablets_by_channel[_node_id]) {
+        TTabletCommitInfo commit_info;
+        commit_info.tabletId = tablet;
+        commit_info.backendId = _node_id;
+        _tablet_commit_infos.emplace_back(std::move(commit_info));
+    }
+    _close_time_ms = UnixMillis() - _close_time_ms;
+
+    if (_add_batches_finished) {
+        _close_check();
+        state->tablet_commit_infos().insert(state->tablet_commit_infos().end(),
+                                            std::make_move_iterator(_tablet_commit_infos.begin()),
+                                            std::make_move_iterator(_tablet_commit_infos.end()));
+
+        _index_channel->set_error_tablet_in_state(state);
+        return Status::OK();
+    }
+
+    std::stringstream ss;
+    ss << "close wait failed coz rpc error";
+    {
+        std::lock_guard<SpinLock> l(_cancel_msg_lock);
+        if (_cancel_msg != "") {
+            ss << ". " << _cancel_msg;
+        }
+    }
+    return Status::InternalError(ss.str());
+}
+
+void VNodeChannel::cancel(const std::string& cancel_msg) {
+    int res = brpc::StreamClose(_stream_id);
+    if (res != 0) {
+        LOG(INFO) << "StreamClose return: " << res;
+    }
+    NodeChannel::cancel(cancel_msg);
 }
 
 Status VNodeChannel::add_row(const BlockRow& block_row, int64_t tablet_id) {
@@ -183,101 +211,82 @@ int VNodeChannel::try_send_and_fetch_status(RuntimeState* state,
         return 0;
     }
 
-    if (!_add_block_closure->try_set_in_flight()) {
-        return _send_finished ? 0 : 1;
+    if (_pending_batches_num > 0 || _stream_msg.size() > 0) {
+        try_send_batch(state);
     }
-
-    // We are sure that try_send_batch is not running
-    if (_pending_batches_num > 0) {
-        auto s = thread_pool_token->submit_func(
-                std::bind(&VNodeChannel::try_send_block, this, state));
-        if (!s.ok()) {
-            _cancel_with_msg("submit send_batch task to send_batch_thread_pool failed");
-            // clear in flight
-            _add_block_closure->clear_in_flight();
-        }
-        // in_flight is cleared in closure::Run
-    } else {
-        // clear in flight
-        _add_block_closure->clear_in_flight();
-    }
-    return _send_finished ? 0 : 1;
+    return (_send_finished && _stream_msg.size() == 0) ? 0 : 1;
 }
 
 void VNodeChannel::try_send_block(RuntimeState* state) {
     SCOPED_ATTACH_TASK_THREAD(state, _node_channel_tracker);
     SCOPED_ATOMIC_TIMER(&_actual_consume_ns);
-    AddBlockReq send_block;
-    {
-        debug::ScopedTSANIgnoreReadsAndWrites ignore_tsan;
-        std::lock_guard<std::mutex> l(_pending_batches_lock);
-        DCHECK(!_pending_blocks.empty());
-        send_block = std::move(_pending_blocks.front());
-        _pending_blocks.pop();
-        _pending_batches_num--;
-        _pending_batches_bytes -= send_block.first->allocated_bytes();
-    }
-
-    auto mutable_block = std::move(send_block.first);
-    auto request = std::move(send_block.second); // doesn't need to be saved in heap
-
-    // tablet_ids has already set when add row
-    request.set_packet_seq(_next_packet_seq);
-    auto block = mutable_block->to_block();
-    if (block.rows() > 0) {
-        SCOPED_ATOMIC_TIMER(&_serialize_batch_ns);
-        size_t uncompressed_bytes = 0, compressed_bytes = 0;
-        Status st = block.serialize(request.mutable_block(), &uncompressed_bytes, &compressed_bytes,
-                                    &_column_values_buffer);
-        if (!st.ok()) {
-            cancel(fmt::format("{}, err: {}", channel_info(), st.get_error_msg()));
-            _add_block_closure->clear_in_flight();
-            return;
-        }
-        if (compressed_bytes >= double(config::brpc_max_body_size) * 0.95f) {
-            LOG(WARNING) << "send block too large, this rpc may failed. send size: "
-                         << compressed_bytes << ", threshold: " << config::brpc_max_body_size
-                         << ", " << channel_info();
-        }
-    }
-
-    int remain_ms = _rpc_timeout_ms - _timeout_watch.elapsed_time() / NANOS_PER_MILLIS;
-    if (UNLIKELY(remain_ms < config::min_load_rpc_timeout_ms)) {
-        if (remain_ms <= 0 && !request.eos()) {
-            cancel(fmt::format("{}, err: timeout", channel_info()));
-            _add_block_closure->clear_in_flight();
-            return;
-        } else {
-            remain_ms = config::min_load_rpc_timeout_ms;
-        }
-    }
-
-    _add_block_closure->reset();
-    _add_block_closure->cntl.set_timeout_ms(remain_ms);
-    if (config::tablet_writer_ignore_eovercrowded) {
-        _add_block_closure->cntl.ignore_eovercrowded();
-    }
-
-    if (request.eos()) {
-        for (auto pid : _parent->_partition_ids) {
-            request.add_partition_ids(pid);
+    if (_stream_msg.size() == 0) {
+        AddBlockReq send_block;
+        {
+            debug::ScopedTSANIgnoreReadsAndWrites ignore_tsan;
+            std::lock_guard<std::mutex> l(_pending_batches_lock);
+            DCHECK(!_pending_blocks.empty());
+            send_block = std::move(_pending_blocks.front());
+            _pending_blocks.pop();
+            _pending_batches_num--;
+            _pending_batches_bytes -= send_block.first->allocated_bytes();
         }
 
-        // eos request must be the last request
-        _add_block_closure->end_mark();
-        _send_finished = true;
-        CHECK(_pending_batches_num == 0) << _pending_batches_num;
+        auto mutable_block = std::move(send_block.first);
+        auto request = std::move(send_block.second); // doesn't need to be saved in heap
+
+        // tablet_ids has already set when add row
+        request.set_packet_seq(_next_packet_seq);
+        auto block = mutable_block->to_block();
+        if (block.rows() > 0) {
+            SCOPED_ATOMIC_TIMER(&_serialize_batch_ns);
+            size_t uncompressed_bytes = 0, compressed_bytes = 0;
+            Status st = block.serialize(request.mutable_block(), &uncompressed_bytes,
+                                        &compressed_bytes, &_column_values_buffer);
+            if (!st.ok()) {
+                cancel(fmt::format("{}, err: {}", channel_info(), st.get_error_msg()));
+                return;
+            }
+            if (compressed_bytes >= double(config::brpc_max_body_size) * 0.95f) {
+                LOG(WARNING) << "send block too large, this rpc may failed. send size: "
+                             << compressed_bytes << ", threshold: " << config::brpc_max_body_size
+                             << ", " << channel_info();
+            }
+        }
+
+        int remain_ms = _rpc_timeout_ms - _timeout_watch.elapsed_time() / NANOS_PER_MILLIS;
+        if (UNLIKELY(remain_ms < config::min_load_rpc_timeout_ms)) {
+            if (remain_ms <= 0 && !request.eos()) {
+                cancel(fmt::format("{}, err: timeout", channel_info()));
+                return;
+            } else {
+                remain_ms = config::min_load_rpc_timeout_ms;
+            }
+        }
+
+        if (request.eos()) {
+            for (auto pid : _parent->_partition_ids) {
+                request.add_partition_ids(pid);
+            }
+
+            // eos request must be the last request
+            _send_finished = true;
+            CHECK(_pending_batches_num == 0) << _pending_batches_num;
+        }
+        butil::IOBufAsZeroCopyOutputStream wrapper(&_stream_msg);
+        request.SerializeToZeroCopyStream(&wrapper);
     }
 
-    if (request.has_block()) {
-        request_block_transfer_attachment<PTabletWriterAddBlockRequest,
-                                          ReusableClosure<PTabletWriterAddBlockResult>>(
-                &request, _column_values_buffer, _add_block_closure);
+    int res = brpc::StreamWrite(_stream_id, _stream_msg);
+    if (res == 0) {
+        _add_batches_finished.store(_send_finished);
+        _next_packet_seq++;
+        _stream_msg.clear();
+    } else if (res == EINVAL) {
+        cancel(fmt::format("{}, err: StreamWrite return EINVAL", channel_info()));
+    } else if (res == EAGAIN) {
+        LOG(INFO) << "Stream is full";
     }
-    _stub->tablet_writer_add_block(&_add_block_closure->cntl, &request, &_add_block_closure->result,
-                                   _add_block_closure);
-
-    _next_packet_seq++;
 }
 
 void VNodeChannel::_close_check() {
@@ -446,7 +455,9 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block)
 }
 
 Status VOlapTableSink::close(RuntimeState* state, Status exec_status) {
-    if (_closed) return _close_status;
+    if (_closed) {
+        return _close_status;
+    }
     vectorized::VExpr::close(_output_vexpr_ctxs, state);
     return OlapTableSink::close(state, exec_status);
 }

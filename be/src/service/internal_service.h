@@ -29,6 +29,7 @@ class Controller;
 namespace doris {
 
 class ExecEnv;
+class TabletAddBlockReceiver;
 
 class PInternalServiceImpl : public PBackendService {
 public:
@@ -128,6 +129,8 @@ private:
 private:
     ExecEnv* _exec_env;
     PriorityThreadPool _tablet_worker_pool;
+    std::unique_ptr<TabletAddBlockReceiver> _tablet_add_block_receiver;
+    std::vector<uint64_t> _stream_ids;
 };
 
 } // namespace doris

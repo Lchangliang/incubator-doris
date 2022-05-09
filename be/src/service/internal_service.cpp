@@ -41,6 +41,39 @@
 
 namespace doris {
 
+class TabletAddBlockReceiver : public brpc::StreamInputHandler {
+public:
+    TabletAddBlockReceiver(ExecEnv* exec_env)
+            : brpc::StreamInputHandler(), _exec_env(exec_env) {}
+    int on_received_messages(brpc::StreamId id, butil::IOBuf* const messages[],
+                             size_t size) override {
+        auto res = Status::OK();
+        for (size_t i = 0; i < size; ++i) {
+            if (!res.ok()) {
+                LOG(INFO) << "[TabletAddBlockReceiver] " << res.message();
+                return res.code();
+            }
+            PTabletWriterAddBlockRequest request;
+            PTabletWriterAddBlockResult response;
+            butil::IOBufAsZeroCopyInputStream wrapper(*messages[i]);
+            if (!request.ParseFromZeroCopyStream(&wrapper)) {
+                LOG(INFO) << "Request Parse Error";
+            }
+            res = _exec_env->load_channel_mgr()->add_batch(request, &response);
+        }
+        return res.code();
+    }
+
+    void on_idle_timeout(brpc::StreamId id) override {
+        LOG(INFO) << "Stream=" << id << " has no data transmission for a while";
+    }
+
+    void on_closed(brpc::StreamId id) override { LOG(INFO) << "Stream=" << id << " is closed"; }
+
+private:
+    ExecEnv* _exec_env;
+};
+
 DEFINE_GAUGE_METRIC_PROTOTYPE_2ARG(add_batch_task_queue_size, MetricUnit::NOUNIT);
 
 bthread_key_t btls_key;
@@ -54,11 +87,15 @@ PInternalServiceImpl::PInternalServiceImpl(ExecEnv* exec_env)
     REGISTER_HOOK_METRIC(add_batch_task_queue_size,
                          [this]() { return _tablet_worker_pool.get_queue_size(); });
     CHECK_EQ(0, bthread_key_create(&btls_key, thread_context_deleter));
+
+    _tablet_add_block_receiver = std::make_unique<TabletAddBlockReceiver>(_exec_env);
 }
 
 PInternalServiceImpl::~PInternalServiceImpl() {
     DEREGISTER_HOOK_METRIC(add_batch_task_queue_size);
     CHECK_EQ(0, bthread_key_delete(btls_key));
+    std::for_each(_stream_ids.begin(), _stream_ids.end(),
+                  [](auto& stream_id) { brpc::StreamClose(stream_id); });
 }
 
 void PInternalServiceImpl::transmit_data(google::protobuf::RpcController* cntl_base,
@@ -126,26 +163,27 @@ void PInternalServiceImpl::tablet_writer_add_block(google::protobuf::RpcControll
              << ", index_id=" << request->index_id() << ", sender_id=" << request->sender_id()
              << ", current_queued_size=" << _tablet_worker_pool.get_queue_size();
     int64_t submit_task_time_ns = MonotonicNanos();
-    _tablet_worker_pool.offer([cntl_base, request, response, done, submit_task_time_ns, this]() {
-        int64_t wait_execution_time_ns = MonotonicNanos() - submit_task_time_ns;
-        brpc::ClosureGuard closure_guard(done);
-        int64_t execution_time_ns = 0;
-        {
-            SCOPED_RAW_TIMER(&execution_time_ns);
-            brpc::Controller* cntl = static_cast<brpc::Controller*>(cntl_base);
-            attachment_transfer_request_block<PTabletWriterAddBlockRequest>(request, cntl);
-            auto st = _exec_env->load_channel_mgr()->add_batch(*request, response);
-            if (!st.ok()) {
-                LOG(WARNING) << "tablet writer add block failed, message=" << st.get_error_msg()
-                             << ", id=" << request->id() << ", index_id=" << request->index_id()
-                             << ", sender_id=" << request->sender_id()
-                             << ", backend id=" << request->backend_id();
-            }
-            st.to_protobuf(response->mutable_status());
+    int64_t wait_execution_time_ns = MonotonicNanos() - submit_task_time_ns;
+    brpc::ClosureGuard closure_guard(done);
+    int64_t execution_time_ns = 0;
+    {
+        SCOPED_RAW_TIMER(&execution_time_ns);
+        brpc::Controller* cntl = static_cast<brpc::Controller*>(cntl_base);
+        auto st = Status::OK();
+        st.to_protobuf(response->mutable_status());
+        brpc::StreamOptions stream_options;
+        stream_options.max_buf_size = 10 * 1024 * 1024;
+        stream_options.handler = _tablet_add_block_receiver.get();
+        brpc::StreamId stream_id;
+        if (brpc::StreamAccept(&stream_id, *cntl, &stream_options) != 0) {
+            cntl->SetFailed("Fail to accept stream");
+            return;
         }
-        response->set_execution_time_us(execution_time_ns / NANOS_PER_MICRO);
-        response->set_wait_execution_time_us(wait_execution_time_ns / NANOS_PER_MICRO);
-    });
+        _stream_ids.push_back(stream_id);
+        LOG(INFO) << "Accept a stream";
+    }
+    response->set_execution_time_us(execution_time_ns / NANOS_PER_MICRO);
+    response->set_wait_execution_time_us(wait_execution_time_ns / NANOS_PER_MICRO);
 }
 
 void PInternalServiceImpl::tablet_writer_add_batch(google::protobuf::RpcController* cntl_base,

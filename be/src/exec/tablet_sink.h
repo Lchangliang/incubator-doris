@@ -176,7 +176,7 @@ public:
     virtual Status init(RuntimeState* state);
 
     // we use open/open_wait to parallel
-    void open();
+    virtual void open();
     virtual Status open_wait();
 
     Status add_row(Tuple* tuple, int64_t tablet_id);
@@ -189,9 +189,9 @@ public:
     // 1. mark_close()->close_wait() PS. close_wait() will block waiting for the last AddBatch rpc response.
     // 2. just cancel()
     virtual void mark_close();
-    Status close_wait(RuntimeState* state);
+    virtual Status close_wait(RuntimeState* state);
 
-    void cancel(const std::string& cancel_msg);
+    virtual void cancel(const std::string& cancel_msg);
 
     // return:
     // 0: stopped, send finished(eos request has been sent), or any internal error;

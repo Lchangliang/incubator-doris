@@ -19,6 +19,7 @@
 
 #include <fmt/format.h>
 
+#include <chrono>
 #include <sstream>
 #include <string>
 
@@ -1266,7 +1267,7 @@ void OlapTableSink::_send_batch_process(RuntimeState* state) {
             return;
         }
     } while (!_stop_background_threads_latch.wait_for(
-            std::chrono::milliseconds(config::olap_table_sink_send_interval_ms)));
+            std::chrono::microseconds(100)));
 }
 
 } // namespace stream_load
