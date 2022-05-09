@@ -85,10 +85,10 @@ void VNodeChannel::open() {
     if (brpc::StreamCreate(&_stream_id, cntl, &options) != 0) {
         LOG(ERROR) << "Fail to create stream";
     }
-    PTabletWriterAddBlockRequest add_batch_request = _cur_add_block_request;
-    add_batch_request.set_packet_seq(0);
+    PTabletWriterAddBlockRequest add_block_request = _cur_add_block_request;
+    add_block_request.set_packet_seq(0);
     PTabletWriterAddBlockResult add_batch_result;
-    _streaming_stub->tablet_writer_add_block(&cntl, &add_batch_request, &add_batch_result, nullptr);
+    _streaming_stub->tablet_writer_add_block(&cntl, &add_block_request, &add_batch_result, nullptr);
     if (cntl.Failed()) {
         LOG(ERROR) << "Fail to connect stream, " << cntl.ErrorText();
     }
@@ -180,7 +180,10 @@ Status VNodeChannel::add_row(const BlockRow& block_row, int64_t tablet_id) {
     // But there is still some unfinished things, we do mem limit here temporarily.
     // _cancelled may be set by rpc callback, and it's possible that _cancelled might be set in any of the steps below.
     // It's fine to do a fake add_row() and return OK, because we will check _cancelled in next add_row() or mark_close().
-    while (!_cancelled && _parent->_mem_tracker->any_limit_exceeded() && _pending_batches_num > 0) {
+    while (!_cancelled &&
+           (_pending_batches_bytes > _max_pending_batches_bytes ||
+            _parent->_mem_tracker->any_limit_exceeded()) &&
+           _pending_batches_num > 0) {
         SCOPED_ATOMIC_TIMER(&_mem_exceeded_block_ns);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -194,6 +197,7 @@ Status VNodeChannel::add_row(const BlockRow& block_row, int64_t tablet_id) {
             std::lock_guard<std::mutex> l(_pending_batches_lock);
             //To simplify the add_row logic, postpone adding block into req until the time of sending req
             _pending_blocks.emplace(std::move(_cur_mutable_block), _cur_add_block_request);
+            _pending_batches_bytes += _cur_mutable_block->allocated_bytes();
             _pending_batches_num++;
         }
 
@@ -212,7 +216,7 @@ int VNodeChannel::try_send_and_fetch_status(RuntimeState* state,
     }
 
     if (_pending_batches_num > 0 || _stream_msg.size() > 0) {
-        try_send_batch(state);
+        try_send_block(state);
     }
     return (_send_finished && _stream_msg.size() == 0) ? 0 : 1;
 }
