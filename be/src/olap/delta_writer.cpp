@@ -208,6 +208,7 @@ Status DeltaWriter::write(const vectorized::Block* block, const std::vector<int>
     if (_is_cancelled) {
         return Status::OLAPInternalError(OLAP_ERR_ALREADY_CANCELLED);
     }
+    LOG(INFO) << "[DeltaWriter] block rows: " << block->rows();
 
     int start = 0, end = 0;
     const size_t num_rows = row_idxs.size();

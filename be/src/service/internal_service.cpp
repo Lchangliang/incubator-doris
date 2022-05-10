@@ -59,6 +59,7 @@ public:
             if (!request.ParseFromZeroCopyStream(&wrapper)) {
                 LOG(INFO) << "Request Parse Error";
             }
+            LOG(INFO) << "[TabletAddBlockReceiver]: " << request.packet_seq() << " has " << request.block().column_values().size();
             res = _exec_env->load_channel_mgr()->add_batch(request, &response);
         }
         return res.code();

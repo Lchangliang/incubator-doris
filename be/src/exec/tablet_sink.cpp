@@ -1267,7 +1267,7 @@ void OlapTableSink::_send_batch_process(RuntimeState* state) {
             return;
         }
     } while (!_stop_background_threads_latch.wait_for(
-            std::chrono::microseconds(100)));
+            std::chrono::milliseconds(1)));
 }
 
 } // namespace stream_load

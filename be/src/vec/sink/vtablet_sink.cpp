@@ -78,7 +78,10 @@ Status VNodeChannel::init(RuntimeState* state) {
 
 void VNodeChannel::open() {
     NodeChannel::open();
+}
 
+Status VNodeChannel::open_wait() {
+    Status status = NodeChannel::open_wait();
     brpc::Controller cntl;
     brpc::StreamOptions options;
     options.max_buf_size = 10 * 1024 * 1024;
@@ -92,10 +95,6 @@ void VNodeChannel::open() {
     if (cntl.Failed()) {
         LOG(ERROR) << "Fail to connect stream, " << cntl.ErrorText();
     }
-}
-
-Status VNodeChannel::open_wait() {
-    Status status = NodeChannel::open_wait();
     if (!status.ok()) {
         return status;
     }
@@ -135,6 +134,10 @@ Status VNodeChannel::close_wait(RuntimeState* state) {
     _close_time_ms = UnixMillis() - _close_time_ms;
 
     if (_add_batches_finished) {
+        int res = brpc::StreamClose(_stream_id);
+        if (res != 0) {
+            LOG(INFO) << "StreamClose return: " << res;
+        }
         _close_check();
         state->tablet_commit_infos().insert(state->tablet_commit_infos().end(),
                                             std::make_move_iterator(_tablet_commit_infos.begin()),
@@ -196,8 +199,8 @@ Status VNodeChannel::add_row(const BlockRow& block_row, int64_t tablet_id) {
             SCOPED_ATOMIC_TIMER(&_queue_push_lock_ns);
             std::lock_guard<std::mutex> l(_pending_batches_lock);
             //To simplify the add_row logic, postpone adding block into req until the time of sending req
-            _pending_blocks.emplace(std::move(_cur_mutable_block), _cur_add_block_request);
             _pending_batches_bytes += _cur_mutable_block->allocated_bytes();
+            _pending_blocks.emplace(std::move(_cur_mutable_block), _cur_add_block_request);
             _pending_batches_num++;
         }
 
@@ -246,7 +249,7 @@ void VNodeChannel::try_send_block(RuntimeState* state) {
             SCOPED_ATOMIC_TIMER(&_serialize_batch_ns);
             size_t uncompressed_bytes = 0, compressed_bytes = 0;
             Status st = block.serialize(request.mutable_block(), &uncompressed_bytes,
-                                        &compressed_bytes, &_column_values_buffer);
+                                        &compressed_bytes, request.mutable_block()->mutable_column_values());
             if (!st.ok()) {
                 cancel(fmt::format("{}, err: {}", channel_info(), st.get_error_msg()));
                 return;
@@ -280,7 +283,6 @@ void VNodeChannel::try_send_block(RuntimeState* state) {
         butil::IOBufAsZeroCopyOutputStream wrapper(&_stream_msg);
         request.SerializeToZeroCopyStream(&wrapper);
     }
-
     int res = brpc::StreamWrite(_stream_id, _stream_msg);
     if (res == 0) {
         _add_batches_finished.store(_send_finished);
