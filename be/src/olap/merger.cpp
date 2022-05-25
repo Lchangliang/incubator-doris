@@ -102,7 +102,7 @@ Status Merger::vmerge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, co
     reader_params.version = dst_rowset_writer->version();
     reader_params.tablet_schema = cur_tablet_schema;
 
-    const auto& schema = tablet->tablet_schema();
+    const auto& schema = *cur_tablet_schema;
     reader_params.return_columns.resize(schema.num_columns());
     std::iota(reader_params.return_columns.begin(), reader_params.return_columns.end(), 0);
     reader_params.origin_return_columns = &reader_params.return_columns;
