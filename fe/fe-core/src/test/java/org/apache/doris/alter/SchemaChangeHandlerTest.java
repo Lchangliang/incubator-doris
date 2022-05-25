@@ -379,7 +379,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         try {
             Deencapsulation.invoke(schemaChangeHandler, "addColumnInternal", olapTable, newColumn, columnPosition,
                                    new Long(2), new Long(1),
-                                   Maps.newHashMap(), Sets.newHashSet());
+                                   Maps.newHashMap(), Sets.newHashSet(), false);
             Assert.fail();
         } catch (Exception e) {
             System.out.println(e.getMessage());
