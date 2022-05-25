@@ -93,6 +93,10 @@ Status BetaRowsetWriter::init(const RowsetWriterContext& rowset_writer_context) 
         _rowset_meta->set_version(_context.version);
     }
     _rowset_meta->set_tablet_uid(_context.tablet_uid);
+    if (_context.tablet_schema->num_columns() > 0 &&
+        _context.tablet_schema->column(0).col_unique_id() >= 0) {
+        _rowset_meta->set_tablet_schema(_context.tablet_schema);
+    }
 
     return Status::OK();
 }

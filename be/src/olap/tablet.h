@@ -268,14 +268,17 @@ public:
         return _tablet_meta->all_beta();
     }
 
+    const TabletSchema& tablet_schema() const override;
+
     void find_alpha_rowsets(std::vector<RowsetSharedPtr>* rowsets) const;
 
     Status create_rowset_writer(const Version& version, const RowsetStatePB& rowset_state,
-                                const SegmentsOverlapPB& overlap,
+                                const SegmentsOverlapPB& overlap, const TabletSchema* tablet_schema,
                                 std::unique_ptr<RowsetWriter>* rowset_writer);
 
     Status create_rowset_writer(const int64_t& txn_id, const PUniqueId& load_id,
                                 const RowsetStatePB& rowset_state, const SegmentsOverlapPB& overlap,
+                                const TabletSchema* tablet_schema,
                                 std::unique_ptr<RowsetWriter>* rowset_writer);
 
     Status create_rowset(RowsetMetaSharedPtr rowset_meta, RowsetSharedPtr* rowset);

@@ -116,6 +116,7 @@ Status SegmentWriter::append_block(const vectorized::Block* block, size_t row_po
                                    size_t num_rows) {
     assert(block && num_rows > 0 && row_pos + num_rows <= block->rows() &&
            block->columns() == _column_writers.size());
+    LOG(INFO) << "block columns: " << block->columns();
     _olap_data_convertor.set_source_content(block, row_pos, num_rows);
 
     // find all row pos for short key indexes
