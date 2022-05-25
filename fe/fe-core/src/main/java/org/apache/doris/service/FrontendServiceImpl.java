@@ -17,12 +17,22 @@
 
 package org.apache.doris.service;
 
+import org.apache.doris.alter.SchemaChangeHandler;
+import org.apache.doris.analysis.AddColumnsClause;
+import org.apache.doris.analysis.ColumnDef;
+import org.apache.doris.analysis.ColumnDef.DefaultValue;
+import org.apache.doris.analysis.TableName;
+import org.apache.doris.analysis.TypeDef;
+import org.apache.doris.analysis.SetType;
 import org.apache.doris.analysis.SetType;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.catalog.Catalog;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Database;
+import org.apache.doris.catalog.Index;
+import org.apache.doris.catalog.PrimitiveType;
 import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.ScalarType;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.cluster.ClusterNamespace;
@@ -92,10 +102,13 @@ import org.apache.doris.thrift.TMiniLoadBeginResult;
 import org.apache.doris.thrift.TMiniLoadEtlStatusResult;
 import org.apache.doris.thrift.TMiniLoadRequest;
 import org.apache.doris.thrift.TNetworkAddress;
+import org.apache.doris.thrift.TPrimitiveType;
 import org.apache.doris.thrift.TPrivilegeStatus;
 import org.apache.doris.thrift.TReportExecStatusParams;
 import org.apache.doris.thrift.TReportExecStatusResult;
 import org.apache.doris.thrift.TReportRequest;
+import org.apache.doris.thrift.TAddColumnsRequest;
+import org.apache.doris.thrift.TAddColumnsResult;
 import org.apache.doris.thrift.TShowVariableRequest;
 import org.apache.doris.thrift.TShowVariableResult;
 import org.apache.doris.thrift.TSnapshotLoaderReportRequest;
@@ -127,10 +140,15 @@ import org.apache.thrift.TException;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.ZoneId; 
 
 // Frontend service used to serve all request for this frontend through
 // thrift protocol
@@ -1193,4 +1211,128 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         return result;
     }
 
+    @Override
+    public TAddColumnsResult addColumns(TAddColumnsRequest request) throws TException {
+        String clientAddr = getClientAddrAsString();
+        LOG.debug("schema change clientAddr: {}, request: {}", clientAddr, request);
+
+        TStatus status = new TStatus(TStatusCode.OK);
+        List<TColumnDef> allColumns = new ArrayList<TColumnDef>();
+
+        Catalog catalog = Catalog.getCurrentCatalog();
+        try {
+            if (!catalog.isMaster()) {
+                status.setStatusCode(TStatusCode.ILLEGAL_STATE);
+                status.addToErrorMsgs("retry rpc request to master.");
+                TAddColumnsResult result = new TAddColumnsResult(status, request.getTableId(), allColumns);
+                LOG.debug("result: {}", result);
+                return result;
+            }
+            TableName tableName = catalog.getTableNameByTableId(request.getTableId());
+            if (tableName == null) {
+                throw new MetaNotFoundException("table_id " + request.getTableId() + " does not exist");
+            }
+
+            Database db = catalog.getDbNullable(tableName.getDb());
+            if (db == null) {
+                throw new MetaNotFoundException("db " + tableName.getDb() + " does not exist");
+            }
+
+            List<TColumnDef> addColumns = request.getAddColumns();
+            if (addColumns == null || addColumns.size() == 0) {
+                throw new UserException("invalid request: addColumns empty.");
+            }
+
+            //rpc only olap table 
+            OlapTable olapTable = db.getTableOrMetaException(tableName.getTbl(), TableType.OLAP);
+            olapTable.writeLockOrMetaException();
+
+            try {
+                //3.create AddColumnsClause
+                List<ColumnDef> ColumnDefs = new ArrayList<ColumnDef>();
+                for (TColumnDef tColumnDef : addColumns) {
+                    String comment = tColumnDef.getComment();
+                    if (comment == null || comment.length() == 0) {
+                        Instant ins = Instant.ofEpochSecond(1568568760);
+                        ZonedDateTime zdt = ins.atZone(ZoneId.systemDefault());
+                        comment = "auto change " + zdt.toString();
+                    } 
+
+                    TColumnDesc tColumnDesc = tColumnDef.getColumnDesc();
+
+                    String columnName = tColumnDesc.getColumnName();
+                    TPrimitiveType tPrimitiveType = tColumnDesc.getColumnType();
+                    int columnLength = tColumnDesc.getColumnLength();
+                    int columnPrecision = tColumnDesc.getColumnPrecision();
+                    int columnScale = tColumnDesc.getColumnScale();
+                    boolean isAllowNull = tColumnDesc.isIsAllowNull();
+                    TypeDef typeDef = new TypeDef(ScalarType.createType(PrimitiveType.fromThrift(tPrimitiveType), columnLength, columnPrecision, columnScale));
+                    ColumnDef columnDef = new ColumnDef(columnName, typeDef, false, null, isAllowNull, DefaultValue.NOT_SET, comment, true);
+                    ColumnDefs.add(columnDef);
+                }
+
+                AddColumnsClause addColumnsClause = new AddColumnsClause(ColumnDefs, null, null);
+
+                // index id -> index schema
+                Map<Long, List<Column>> indexSchemaMap = new HashMap<>();
+                for (Map.Entry<Long, List<Column>> entry : olapTable.getIndexIdToSchema(true).entrySet()) {
+                    indexSchemaMap.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+                }
+                //4. call schame change function, only for dynamic table feature.
+                SchemaChangeHandler schemaChangeHandler = new SchemaChangeHandler(); 
+                boolean ligthSchemaChange = schemaChangeHandler.processAddColumns(addColumnsClause, olapTable, indexSchemaMap, true);
+                if (ligthSchemaChange) {
+                    //for schema change add column optimize, direct modify table meta.
+                    List<Index> newIndexes = olapTable.getCopiedIndexes();
+                    Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
+                } else {
+                    throw new MetaNotFoundException("table_id " + request.getTableId() + " cannot light schema change through rpc.");
+                }
+
+                //5. build all columns
+                for (Column column : olapTable.getBaseSchema()) {
+                    TColumnDesc desc = new TColumnDesc(column.getName(), column.getDataType().toThrift());
+                    Integer precision = column.getOriginType().getPrecision();
+                    if (precision != null) {
+                        desc.setColumnPrecision(precision);
+                    }
+                    Integer columnLength = column.getOriginType().getColumnSize();
+                    if (columnLength != null) {
+                        desc.setColumnLength(columnLength);
+                    }
+                    Integer decimalDigits = column.getOriginType().getDecimalDigits();
+                    if (decimalDigits != null) {
+                        desc.setColumnScale(decimalDigits);
+                    }
+                    desc.setIsAllowNull(column.isAllowNull());
+                    desc.setColUniqueId(column.getUniqueId());
+                    TColumnDef colDef = new TColumnDef(desc);
+                    String comment = column.getComment();
+                    if (comment != null) {
+                        colDef.setComment(comment);
+                    }
+                    allColumns.add(colDef);
+                }
+
+            } catch (Exception e) {
+                status.setStatusCode(TStatusCode.INTERNAL_ERROR);
+                status.addToErrorMsgs(e.getMessage());
+            } finally {
+                olapTable.writeUnlock();
+            }
+        } catch (MetaNotFoundException e) {
+            status.setStatusCode(TStatusCode.NOT_FOUND);
+            status.addToErrorMsgs(e.getMessage());
+        } catch (UserException e) {
+            status.setStatusCode(TStatusCode.INVALID_ARGUMENT);
+            status.addToErrorMsgs(e.getMessage());
+        } catch(Exception e)  {
+            status.setStatusCode(TStatusCode.INTERNAL_ERROR);
+            status.addToErrorMsgs(e.getMessage());
+        }
+
+        TAddColumnsResult result = new TAddColumnsResult(status, request.getTableId(), allColumns);
+        LOG.debug("result: {}", result);
+        return result;
+    }
 }
