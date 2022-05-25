@@ -49,6 +49,7 @@ struct TColumnDesc {
   4: optional i32 columnPrecision
   5: optional i32 columnScale
   6: optional bool isAllowNull
+  7: optional i32 col_unique_id = -1
 }
 
 // A column definition; used by CREATE TABLE and DESCRIBE <table> statements. A column
@@ -741,6 +742,17 @@ struct TWaitingTxnStatusResult {
     2: optional i32 txn_status_id
 }
 
+struct TAddColumnsRequest {
+    1: required i64 table_id
+    2: required list<TColumnDef> addColumns
+}
+
+struct TAddColumnsResult {
+    1: required Status.TStatus status
+    2: required i64 table_id
+    3: required list<TColumnDef> allColumns
+}
+
 service FrontendService {
     TGetDbsResult getDbNames(1: TGetDbsParams params)
     TGetTablesResult getTableNames(1: TGetTablesParams params)
@@ -782,4 +794,6 @@ service FrontendService {
     Status.TStatus snapshotLoaderReport(1: TSnapshotLoaderReportRequest request)
 
     TFrontendPingFrontendResult ping(1: TFrontendPingFrontendRequest request)
+
+    TAddColumnsResult addColumns(1: TAddColumnsRequest request)
 }

@@ -149,7 +149,7 @@ public class SchemaChangeHandler extends AlterHandler {
         }
 
         return addColumnInternal(olapTable, column, columnPos, targetIndexId, baseIndexId,
-                indexSchemaMap, newColNameSet);
+                indexSchemaMap, newColNameSet, false);
     }
 
     private void processAddColumn(AddColumnClause alterClause,
@@ -174,8 +174,17 @@ public class SchemaChangeHandler extends AlterHandler {
         }
     }
 
+    /**
+     *
+     * @param alterClause
+     * @param olapTable
+     * @param indexSchemaMap
+     * @param ignoreSameColumn
+     * @return true: can light schema change, false: cannot light schema change
+     * @throws DdlException
+     */
     public boolean processAddColumns(AddColumnsClause alterClause, OlapTable olapTable,
-                                   Map<Long, List<Column>> indexSchemaMap) throws DdlException {
+                                   Map<Long, List<Column>> indexSchemaMap, boolean ignoreSameColumn) throws DdlException {
         List<Column> columns = alterClause.getColumns();
         String targetIndexName = alterClause.getRollupName();
         checkIndexExists(olapTable, targetIndexName);
@@ -206,7 +215,7 @@ public class SchemaChangeHandler extends AlterHandler {
         boolean ligthSchemaChange = true;
         for (Column column : columns) {
             boolean result = addColumnInternal(olapTable, column, null, targetIndexId, baseIndexId,
-                                indexSchemaMap, newColNameSet);
+                                indexSchemaMap, newColNameSet, ignoreSameColumn);
             if (!result) {
                 ligthSchemaChange = false;
             }
@@ -240,7 +249,16 @@ public class SchemaChangeHandler extends AlterHandler {
         }
     }
 
-    private void processDropColumn(DropColumnClause alterClause, OlapTable olapTable,
+    /**
+     *
+     * @param alterClause
+     * @param olapTable
+     * @param indexSchemaMap
+     * @param indexes
+     * @return true: can light schema change, false: cannot
+     * @throws DdlException
+     */
+    private boolean processDropColumn(DropColumnClause alterClause, OlapTable olapTable,
             Map<Long, LinkedList<Column>> indexSchemaMap, List<Index> indexes) throws DdlException {
 
         boolean ligthSchemaChange = false;
@@ -787,22 +805,26 @@ public class SchemaChangeHandler extends AlterHandler {
         }
     }
 
-    /*
-     * Add 'newColumn' to specified index.
-     * Modified schema will be saved in 'indexSchemaMap'
+    /**
+     *
+     * @param olapTable
+     * @param newColumn  Add 'newColumn' to specified index.
+     * @param columnPos
+     * @param targetIndexId
+     * @param baseIndexId
+     * @param indexSchemaMap Modified schema will be saved in 'indexSchemaMap'
+     * @param newColNameSet
+     * @param ignoreSameColumn
+     * @return true: can light schema change, false: cannot
+     * @throws DdlException
      */
     private boolean addColumnInternal(OlapTable olapTable, Column newColumn, ColumnPosition columnPos,
                                    long targetIndexId, long baseIndexId,
                                    Map<Long, List<Column>> indexSchemaMap,
-                                   Set<String> newColNameSet) throws DdlException {
+                                   Set<String> newColNameSet, boolean ignoreSameColumn) throws DdlException {
 
-        boolean ligthSchemaChange = false;
         //only new table generate ColUniqueId, exist table do not.
-        if (olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE) {
-            //assume can light schema change.
-            ligthSchemaChange = true;
-        }
-
+        boolean ligthSchemaChange = olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE;
         String newColName = newColumn.getName();
 
         //make sure olapTable has locked
@@ -871,9 +893,11 @@ public class SchemaChangeHandler extends AlterHandler {
         // do not support adding new column which already exist in base schema.
         List<Column> baseSchema = olapTable.getBaseSchema(true);
         boolean found = false;
+        Column foundColumn = null;
         for (Column column : baseSchema) {
             if (column.getName().equalsIgnoreCase(newColName)) {
                 found = true;
+                foundColumn = column;
                 break;
             }
         }
@@ -883,7 +907,11 @@ public class SchemaChangeHandler extends AlterHandler {
             } else if (newColName.equalsIgnoreCase(Column.SEQUENCE_COL)) {
                 throw new DdlException("Can not enable sequence column support, already supported sequence column.");
             } else {
-                throw new DdlException("Can not add column which already exists in base table: " + newColName);
+                if (ignoreSameColumn && newColumn.equals(foundColumn)) {
+                    //for add columns rpc, allow add same type column.
+                } else {
+                    throw new DdlException("Can not add column which already exists in base table: " + newColName);
+                }
             }
         }
 
@@ -1624,7 +1652,7 @@ public class SchemaChangeHandler extends AlterHandler {
                     }
                 } else if (alterClause instanceof AddColumnsClause) {
                     // add columns
-                    boolean ligthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap);
+                    boolean ligthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap, false);
                     LOG.debug("processAddColumns, table: {}({}), getMaxColUniqueId(): {}, ligthSchemaChange: {}", olapTable.getName(), olapTable.getId(),
                         olapTable.getMaxColUniqueId(), ligthSchemaChange);
                     if (ligthSchemaChange) {
