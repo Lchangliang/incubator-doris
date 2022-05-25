@@ -23,6 +23,7 @@
 #include <google/protobuf/repeated_field.h>
 #include <google/protobuf/stubs/common.h>
 
+#include <cstdint>
 #include <ostream>
 #include <unordered_map>
 #include <vector>
@@ -32,8 +33,10 @@
 #include "gen_cpp/Descriptors_types.h"     // for TTupleId
 #include "gen_cpp/FrontendService_types.h" // for TTupleId
 #include "gen_cpp/Types_types.h"
+#include "olap/tablet_schema.h"
 #include "runtime/types.h"
 #include "vec/data_types/data_type.h"
+#include "olap/tablet_schema.h"
 
 namespace doris::vectorized {
 struct ColumnWithTypeAndName;
@@ -113,6 +116,8 @@ public:
 
     doris::vectorized::DataTypePtr get_data_type_ptr() const;
 
+    int32_t col_unique_id() const { return _col_unique_id; }
+
 private:
     friend class DescriptorTbl;
     friend class TupleDescriptor;
@@ -127,6 +132,8 @@ private:
     const NullIndicatorOffset _null_indicator_offset;
     const std::string _col_name;
 
+    const int32_t _col_unique_id;
+
     // the idx of the slot in the tuple descriptor (0-based).
     // this is provided by the FE
     const int _slot_idx;
@@ -140,6 +147,8 @@ private:
     int _field_idx;
 
     const bool _is_materialized;
+
+    TabletColumn tablet_column;
 
     SlotDescriptor(const TSlotDescriptor& tdesc);
     SlotDescriptor(const PSlotDescriptor& pdesc);

@@ -27,6 +27,9 @@ import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.thrift.TSlotDescriptor;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
@@ -35,6 +38,7 @@ import java.util.Collections;
 import java.util.List;
 
 public class SlotDescriptor {
+    private static final Logger LOG = LogManager.getLogger(SlotDescriptor.class);
     private final SlotId id;
     private final TupleDescriptor parent;
     private Type type;
@@ -279,15 +283,17 @@ public class SlotDescriptor {
 
     // TODO
     public TSlotDescriptor toThrift() {
-        if (originType != null) {
-            return new TSlotDescriptor(id.asInt(), parent.getId().asInt(), originType.toThrift(), -1,
-                    byteOffset, nullIndicatorByte,
-                    nullIndicatorBit, ((column != null) ? column.getName() : ""), slotIdx, isMaterialized);
-        } else {
-            return new TSlotDescriptor(id.asInt(), parent.getId().asInt(), type.toThrift(), -1,
-                    byteOffset, nullIndicatorByte,
-                    nullIndicatorBit, ((column != null) ? column.getName() : ""), slotIdx, isMaterialized);
+
+        TSlotDescriptor tSlotDescriptor = new TSlotDescriptor(id.asInt(), parent.getId().asInt(),
+                    (originType != null ? originType.toThrift() : type.toThrift()), -1, byteOffset,
+                    nullIndicatorByte, nullIndicatorBit, ((column != null) ? column.getName() : ""),
+                    slotIdx, isMaterialized);
+
+        if (column != null) {
+            LOG.debug("column name:{}, column unique id:{}", column.getName(), column.getUniqueId());
+            tSlotDescriptor.setColUniqueId(column.getUniqueId());
         }
+        return tSlotDescriptor;
     }
 
     public String debugString() {
