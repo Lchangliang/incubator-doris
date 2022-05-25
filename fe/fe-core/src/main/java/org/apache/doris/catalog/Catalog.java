@@ -184,6 +184,7 @@ import org.apache.doris.persist.SetReplicaStatusOperationLog;
 import org.apache.doris.persist.Storage;
 import org.apache.doris.persist.StorageInfo;
 import org.apache.doris.persist.StorageInfoV2;
+import org.apache.doris.persist.TableAddOrDropColumnsInfo;
 import org.apache.doris.persist.TableInfo;
 import org.apache.doris.persist.TablePropertyInfo;
 import org.apache.doris.persist.TruncateTableInfo;
@@ -4893,4 +4894,156 @@ public class Catalog {
         // send task immediately
         AgentTaskExecutor.submit(batchTask);
     }
+
+    // the invoker should keep table's write lock
+    public void modifyTableAddOrDropColumns(Database db, OlapTable olapTable, Map<Long, List<Column>> indexSchemaMap,
+        List<Index> indexes, boolean isReplay) throws DdlException {
+
+        LOG.debug("indexSchemaMap:{}, indexes:{}", indexSchemaMap, indexes);
+        if (olapTable.getState() == OlapTableState.ROLLUP) {
+            throw new DdlException("Table[" + olapTable.getName() + "]'s is doing ROLLUP job");
+        }
+
+        // for now table's state can only be NORMAL
+        Preconditions.checkState(olapTable.getState() == OlapTableState.NORMAL, olapTable.getState().name());
+
+        // for bitmapIndex
+        boolean hasIndexChange = false;
+        Set<Index> newSet = new HashSet<>(indexes);
+        Set<Index> oriSet = new HashSet<>(olapTable.getIndexes());
+        if (!newSet.equals(oriSet)) {
+            hasIndexChange = true;
+        }
+
+        // begin checking each table
+        // ATTN: DO NOT change any meta in this loop 
+        long tableId = olapTable.getId();
+        Map<Long, List<Column>> changedIndexIdToSchema = Maps.newHashMap();
+        for (Long alterIndexId : indexSchemaMap.keySet()) {
+            // Must get all columns including invisible columns.
+            // Because in alter process, all columns must be considered.
+            List<Column> alterSchema = indexSchemaMap.get(alterIndexId);
+
+            LOG.debug("index[{}] is changed. start checking...", alterIndexId);
+            // 1. check order: a) has key; b) value after key
+            boolean meetValue = false;
+            boolean hasKey = false;
+            for (Column column : alterSchema) {
+                if (column.isKey() && meetValue) {
+                    throw new DdlException("Invalid column order. value should be after key. index["
+                            + olapTable.getIndexNameById(alterIndexId) + "]");
+                }
+                if (!column.isKey()) {
+                    meetValue = true;
+                } else {
+                    hasKey = true;
+                }
+            }
+            if (!hasKey) {
+                throw new DdlException("No key column left. index[" + olapTable.getIndexNameById(alterIndexId) + "]");
+            }
+
+            // 2. check partition key
+            PartitionInfo partitionInfo = olapTable.getPartitionInfo();
+            if (partitionInfo.getType() == PartitionType.RANGE || partitionInfo.getType() == PartitionType.LIST) {
+                List<Column> partitionColumns = partitionInfo.getPartitionColumns();
+                for (Column partitionCol : partitionColumns) {
+                    boolean found = false;
+                    for (Column alterColumn : alterSchema) {
+                        if (alterColumn.nameEquals(partitionCol.getName(), true)) {
+                            found = true;
+                            break;
+                        }
+                    } // end for alterColumns
+
+                    if (!found && alterIndexId == olapTable.getBaseIndexId()) {
+                        // 2.1 partition column cannot be deleted.
+                        throw new DdlException("Partition column[" + partitionCol.getName()
+                                + "] cannot be dropped. index[" + olapTable.getIndexNameById(alterIndexId) + "]");
+                    }
+                } // end for partitionColumns
+            }
+
+            // 3. check distribution key:
+            DistributionInfo distributionInfo = olapTable.getDefaultDistributionInfo();
+            if (distributionInfo.getType() == DistributionInfoType.HASH) {
+                List<Column> distributionColumns = ((HashDistributionInfo) distributionInfo).getDistributionColumns();
+                for (Column distributionCol : distributionColumns) {
+                    boolean found = false;
+                    for (Column alterColumn : alterSchema) {
+                        if (alterColumn.nameEquals(distributionCol.getName(), true)) {
+                            found = true;
+                            break;
+                        }
+                    } // end for alterColumns
+                    if (!found && alterIndexId == olapTable.getBaseIndexId()) {
+                        // 2.2 distribution column cannot be deleted.
+                        throw new DdlException("Distribution column[" + distributionCol.getName()
+                                + "] cannot be dropped. index[" + olapTable.getIndexNameById(alterIndexId) + "]");
+                    }
+                } // end for distributionCols
+            }
+
+            // 5. store the changed columns for edit log
+            changedIndexIdToSchema.put(alterIndexId, alterSchema);
+
+            LOG.debug("schema change[{}-{}-{}] check pass.", db.getId(), olapTable.getId(), alterIndexId);
+        } // end for indices
+
+        if (changedIndexIdToSchema.isEmpty() && !hasIndexChange) {
+            throw new DdlException("Nothing is changed. please check your alter stmt.");
+        }
+
+        long baseIndexId = olapTable.getBaseIndexId();
+        olapTable.setNewFullSchema(indexSchemaMap.get(olapTable.getBaseIndexId()));
+
+        List<Long> indexIds = new ArrayList<Long>();
+        indexIds.add(baseIndexId);
+        indexIds.addAll(olapTable.getIndexIdListExceptBaseIndex());
+        //i = 1 to skip base index
+        for (int i = 1; i < indexIds.size(); i++) {
+            List<Column> rollupSchema = indexSchemaMap.get(indexIds.get(i));
+            MaterializedIndexMeta currentIndexMeta = olapTable.getIndexMetaByIndexId(indexIds.get(i));
+            currentIndexMeta.setSchema(rollupSchema);
+        }
+        olapTable.setIndexes(indexes);
+
+        //update max column unique id
+        int maxColUniqueId = olapTable.getMaxColUniqueId();
+        for (Column column : indexSchemaMap.get(olapTable.getBaseIndexId())) {
+            if (column.getUniqueId() > maxColUniqueId) {
+                maxColUniqueId = column.getUniqueId();
+            }
+        }
+        olapTable.setMaxtColUniqueId(maxColUniqueId);
+
+        if (!isReplay) {
+            TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(db.getId(), olapTable.getId(), indexSchemaMap, indexes);
+            LOG.debug("logModifyTableAddOrDropColumns info:{}", info);
+            editLog.logModifyTableAddOrDropColumns(info);
+        }
+        LOG.info("finished modify table's add or drop columns. table: {}, is replay: {}",
+                olapTable.getName(), isReplay);
+    }
+
+    public void replayModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) throws MetaNotFoundException {
+        LOG.debug("info:{}", info);
+        long dbId = info.getDbId();
+        long tableId = info.getTableId();
+        Map<Long, List<Column>> indexSchemaMap = info.getIndexSchemaMap();
+        List<Index> indexes = info.getIndexes();
+
+        Database db = this.getDbOrMetaException(dbId);
+        OlapTable olapTable = db.getTableOrMetaException(tableId, TableType.OLAP);
+        olapTable.writeLock();
+        try {
+            modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, indexes, true);
+        } catch (DdlException e) {
+            // should not happen
+            LOG.warn("failed to replay modify table add or drop columns", e);
+        } finally {
+            olapTable.writeUnlock();
+        }
+    }
+
 }

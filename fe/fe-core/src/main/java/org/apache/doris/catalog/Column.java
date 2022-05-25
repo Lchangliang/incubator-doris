@@ -54,6 +54,7 @@ public class Column implements Writable {
     public static final String DELETE_SIGN = "__DORIS_DELETE_SIGN__";
     public static final String SEQUENCE_COL = "__DORIS_SEQUENCE_COL__";
     private static final String COLUMN_ARRAY_CHILDREN = "item";
+    public static final int COLUMN_UNIQUE_ID_INIT_VALUE = -1;
 
     @SerializedName(value = "name")
     private String name;
@@ -61,12 +62,15 @@ public class Column implements Writable {
     private Type type;
     // column is key: aggregate type is null
     // column is not key and has no aggregate type: aggregate type is none
-    // column is not key and has aggregate type: aggregate type is name of aggregate function.
+    // column is not key and has aggregate type: aggregate type is name of aggregate
+    // function.
     @SerializedName(value = "aggregationType")
     private AggregateType aggregationType;
 
-    // if isAggregationTypeImplicit is true, the actual aggregation type will not be shown in show create table
-    // the key type of table is duplicate or unique: the isAggregationTypeImplicit of value columns are true
+    // if isAggregationTypeImplicit is true, the actual aggregation type will not be
+    // shown in show create table
+    // the key type of table is duplicate or unique: the isAggregationTypeImplicit
+    // of value columns are true
     // other cases: the isAggregationTypeImplicit is false
     @SerializedName(value = "isAggregationTypeImplicit")
     private boolean isAggregationTypeImplicit;
@@ -79,17 +83,23 @@ public class Column implements Writable {
     @SerializedName(value = "comment")
     private String comment;
     @SerializedName(value = "stats")
-    private ColumnStats stats;     // cardinality and selectivity etc.
+    private ColumnStats stats; // cardinality and selectivity etc.
     @SerializedName(value = "children")
     private List<Column> children;
-    // Define expr may exist in two forms, one is analyzed, and the other is not analyzed.
-    // Currently, analyzed define expr is only used when creating materialized views, so the define expr in RollupJob must be analyzed.
-    // In other cases, such as define expr in `MaterializedIndexMeta`, it may not be analyzed after being replayed.
+    // Define expr may exist in two forms, one is analyzed, and the other is not
+    // analyzed.
+    // Currently, analyzed define expr is only used when creating materialized
+    // views, so the define expr in RollupJob must be analyzed.
+    // In other cases, such as define expr in `MaterializedIndexMeta`, it may not be
+    // analyzed after being replayed.
     private Expr defineExpr; // use to define column in materialize view
     @SerializedName(value = "visible")
     private boolean visible;
     @SerializedName(value = "defaultValueExprDef")
     private DefaultValueExprDef defaultValueExprDef; // used for default value
+
+    @SerializedName(value = "uniqueId")
+    private int uniqueId;
 
     public Column() {
         this.name = "";
@@ -100,6 +110,7 @@ public class Column implements Writable {
         this.visible = true;
         this.defineExpr = null;
         this.children = new ArrayList<>(Type.MAX_NESTING_DEPTH);
+        this.uniqueId = -1;
     }
 
     public Column(String name, PrimitiveType dataType) {
@@ -115,16 +126,19 @@ public class Column implements Writable {
     }
 
     public Column(String name, Type type, boolean isKey, AggregateType aggregateType, String defaultValue,
-                  String comment) {
+            String comment) {
         this(name, type, isKey, aggregateType, false, defaultValue, comment);
     }
 
     public Column(String name, Type type, boolean isKey, AggregateType aggregateType, boolean isAllowNull,
-                  String defaultValue, String comment) {
-        this(name, type, isKey, aggregateType, isAllowNull, defaultValue, comment, true, null);
+            String defaultValue, String comment) {
+        this(name, type, isKey, aggregateType, isAllowNull, defaultValue, comment, true, null,
+                COLUMN_UNIQUE_ID_INIT_VALUE);
     }
+
     public Column(String name, Type type, boolean isKey, AggregateType aggregateType, boolean isAllowNull,
-                  String defaultValue, String comment, boolean visible, DefaultValueExprDef defaultValueExprDef) {
+            String defaultValue, String comment, boolean visible, DefaultValueExprDef defaultValueExprDef,
+            int colUniqueId) {
         this.name = name;
         if (this.name == null) {
             this.name = "";
@@ -146,6 +160,7 @@ public class Column implements Writable {
         this.visible = visible;
         this.children = new ArrayList<>(Type.MAX_NESTING_DEPTH);
         createChildrenColumn(this.type, this);
+        this.uniqueId = colUniqueId;
     }
 
     public Column(Column column) {
@@ -161,14 +176,15 @@ public class Column implements Writable {
         this.stats = column.getStats();
         this.visible = column.visible;
         this.children = column.getChildren();
+        this.uniqueId = column.getUniqueId();
     }
 
     public void createChildrenColumn(Type type, Column column) {
         if (type.isArrayType()) {
             Column c = new Column(COLUMN_ARRAY_CHILDREN, ((ArrayType) type).getItemType());
             // TODO We always set the item type in array nullable.
-            //  We may provide an alternative to configure this property of
-            //  the item type in array in future.
+            // We may provide an alternative to configure this property of
+            // the item type in array in future.
             c.setIsAllowNull(true);
             column.addChildrenColumn(c);
         }
@@ -210,7 +226,8 @@ public class Column implements Writable {
     }
 
     public void setIsKey(boolean isKey) {
-        // column is key, aggregationType is always null, isAggregationTypeImplicit is always false.
+        // column is key, aggregationType is always null, isAggregationTypeImplicit is
+        // always false.
         if (isKey) {
             setAggregationType(null, false);
         }
@@ -311,7 +328,6 @@ public class Column implements Writable {
         return result;
     }
 
-
     public void setStats(ColumnStats stats) {
         this.stats = stats;
     }
@@ -366,12 +382,16 @@ public class Column implements Writable {
         tColumn.setVisible(visible);
         toChildrenThrift(this, tColumn);
 
+        tColumn.setColUniqueId(uniqueId);
         // ATTN:
         // Currently, this `toThrift()` method is only used from CreateReplicaTask.
         // And CreateReplicaTask does not need `defineExpr` field.
-        // The `defineExpr` is only used when creating `TAlterMaterializedViewParam`, which is in `AlterReplicaTask`.
-        // And when creating `TAlterMaterializedViewParam`, the `defineExpr` is certainly analyzed.
-        // If we need to use `defineExpr` and call defineExpr.treeToThrift(), make sure it is analyzed, or NPE will thrown.
+        // The `defineExpr` is only used when creating `TAlterMaterializedViewParam`,
+        // which is in `AlterReplicaTask`.
+        // And when creating `TAlterMaterializedViewParam`, the `defineExpr` is
+        // certainly analyzed.
+        // If we need to use `defineExpr` and call defineExpr.treeToThrift(), make sure
+        // it is analyzed, or NPE will thrown.
         return tColumn;
     }
 
@@ -393,8 +413,8 @@ public class Column implements Writable {
             childrenTColumn.setColumnType(childrenTColumnType);
             childrenTColumn.setIsAllowNull(children.isAllowNull());
             // TODO: If we don't set the aggregate type for children, the type will be
-            //  considered as TAggregationType::SUM after deserializing in BE.
-            //  For now, we make children inherit the aggregate type from their parent.
+            // considered as TAggregationType::SUM after deserializing in BE.
+            // For now, we make children inherit the aggregate type from their parent.
             if (tColumn.getAggregationType() != null) {
                 childrenTColumn.setAggregationType(tColumn.getAggregationType());
             }
@@ -532,7 +552,7 @@ public class Column implements Writable {
         String typeStr = type.toSql();
         sb.append(typeStr).append(" ");
         if (aggregationType != null && aggregationType != AggregateType.NONE
-                && !isUniqueTable &&  !isAggregationTypeImplicit) {
+                && !isUniqueTable && !isAggregationTypeImplicit) {
             sb.append(aggregationType.name()).append(" ");
         }
         if (isAllowNull) {
@@ -693,5 +713,13 @@ public class Column implements Writable {
         sb.append(aggregationType);
         sb.append(defaultValue == null ? "" : defaultValue);
         return sb.toString();
+    }
+
+    public void setUniqueId(int colUniqueId) {
+        this.uniqueId = colUniqueId;
+    }
+
+    public int getUniqueId() {
+        return this.uniqueId;
     }
 }
