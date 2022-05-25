@@ -59,7 +59,7 @@ public:
     bool equal(int64_t tablet_id, int32_t schema_hash);
 
     // properties encapsulated in TabletSchema
-    const TabletSchema& tablet_schema() const;
+    virtual const TabletSchema& tablet_schema() const;
 
 protected:
     void _gen_tablet_path();

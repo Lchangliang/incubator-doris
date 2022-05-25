@@ -191,6 +191,10 @@ public class OlapTableSink extends DataSink {
                     indexMeta.getSchemaHash());
             schemaParam.addToIndexes(indexSchema);
         }
+        // add columns
+        for (Column col : table.getFullSchema()) {
+            schemaParam.addToColumns(col.toThrift());
+        }
         return schemaParam;
     }
 
