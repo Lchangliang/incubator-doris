@@ -61,7 +61,6 @@ Status TabletsChannel::open(const PTabletWriterOpenRequest& request) {
     }
     LOG(INFO) << "open tablets channel: " << _key << ", tablets num: " << request.tablets().size()
               << ", timeout(s): " << request.load_channel_timeout_s();
-    LOG(INFO) << "yixiu schema: " << request.schema().DebugString();
     _txn_id = request.txn_id();
     _index_id = request.index_id();
     _schema = new OlapTableSchemaParam();

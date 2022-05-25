@@ -280,7 +280,6 @@ public:
     void set_tablet_schema(const TabletSchema* tablet_schema) {
         TabletSchemaPB* ts_pb = _rowset_meta_pb.mutable_tablet_schema();
         tablet_schema->to_schema_pb(ts_pb);
-        LOG(INFO) << "yixiu rowset: " << ts_pb->DebugString();
         CHECK(_schema == nullptr);
         _schema = std::make_shared<TabletSchema>(*tablet_schema);
     }
@@ -292,9 +291,7 @@ public:
 private:
     friend class AlphaRowsetMeta;
     bool _deserialize_from_pb(const std::string& value) {
-        auto ret =  _rowset_meta_pb.ParseFromString(value);
-        LOG(INFO) << "yixiu rowset: " << _rowset_meta_pb.DebugString();
-        return ret;
+        return _rowset_meta_pb.ParseFromString(value);
     }
 
     bool _serialize_to_pb(std::string* value) {
