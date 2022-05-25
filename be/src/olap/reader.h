@@ -174,6 +174,7 @@ protected:
                                std::set<uint32_t>* load_bf_columns);
 
     TabletSharedPtr tablet() { return _tablet; }
+    const TabletSchema& tablet_schema() {return *_tablet_schema;}
 
     std::unique_ptr<MemPool> _predicate_mem_pool;
     std::set<uint32_t> _load_bf_columns;
