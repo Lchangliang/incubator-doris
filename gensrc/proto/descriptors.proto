@@ -21,6 +21,7 @@ package doris;
 option java_package = "org.apache.doris.proto";
 
 import "types.proto";
+import "olap_file.proto";
 
 message PSlotDescriptor {
     required int32 id = 1;
@@ -58,5 +59,6 @@ message POlapTableSchemaParam {
     repeated PSlotDescriptor slot_descs = 4;
     required PTupleDescriptor tuple_desc = 5;
     repeated POlapTableIndexSchema indexes = 6;
+    repeated ColumnPB columns = 7;
 };
 

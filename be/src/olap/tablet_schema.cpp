@@ -17,6 +17,8 @@
 
 #include "olap/tablet_schema.h"
 
+#include "gen_cpp/descriptors.pb.h"
+#include "olap/types.h"
 #include "tablet_meta.h"
 #include "vec/aggregate_functions/aggregate_function_reader.h"
 #include "vec/aggregate_functions/aggregate_function_simple_factory.h"
@@ -300,8 +302,24 @@ TabletColumn::TabletColumn(FieldAggregationMethod agg, FieldType filed_type, boo
     _length = length;
 }
 
+TabletColumn::TabletColumn(const ColumnPB& column) {
+    init_from_pb(column);
+}
+
+TabletColumn::TabletColumn(const TColumn& column) {
+    init_from_thrift(column);
+}
+
+void TabletColumn::init_from_thrift(const TColumn& tcolumn) {
+    _unique_id = tcolumn.col_unique_id;
+    ColumnPB column_pb;
+    TabletMeta::init_column_from_tcolumn(_unique_id, tcolumn, &column_pb);
+    init_from_pb(column_pb);
+}
+
 void TabletColumn::init_from_pb(const ColumnPB& column) {
     _unique_id = column.unique_id();
+    _col_unique_id = column.col_unique_id();
     _col_name = column.name();
     _type = TabletColumn::get_field_type_by_string(column.type());
     _is_key = column.is_key();
@@ -351,7 +369,7 @@ void TabletColumn::init_from_pb(const ColumnPB& column) {
     }
 }
 
-void TabletColumn::to_schema_pb(ColumnPB* column) {
+void TabletColumn::to_schema_pb(ColumnPB* column) const {
     column->set_unique_id(_unique_id);
     column->set_name(_col_name);
     column->set_type(get_string_by_field_type(_type));
@@ -416,6 +434,26 @@ vectorized::AggregateFunctionPtr TabletColumn::get_aggregate_function(
             agg_name, argument_types, {}, argument_types.back()->is_nullable());
 }
 
+void TabletSchema::append_column(TabletColumn column) {
+    if (column.is_key()) {
+        _num_key_columns++;
+    }
+    if (column.is_nullable()) {
+        _num_null_columns++;
+    }
+    _field_name_to_index[column.name()] = _num_columns;
+    _cols.push_back(std::move(column));
+    _num_columns++;
+}
+
+void TabletSchema::clear_columns() {
+    _field_name_to_index.clear();
+    _num_columns = 0;
+    _num_null_columns = 0;
+    _num_key_columns = 0;
+    _cols.clear();
+}
+
 void TabletSchema::init_from_pb(const TabletSchemaPB& schema) {
     _keys_type = schema.keys_type();
     _num_columns = 0;
@@ -455,7 +493,55 @@ void TabletSchema::init_from_pb(const TabletSchemaPB& schema) {
     _compression_type = schema.compression_type();
 }
 
-void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_meta_pb) {
+void TabletSchema::build_current_tablet_schema(const POlapTableSchemaParam& ptable_schema_param,
+                                               const TabletSchema& ori_tablet_schema) {
+    // copy from ori_tablet_schema
+    _keys_type = ori_tablet_schema.keys_type();
+    _num_short_key_columns = ori_tablet_schema.num_short_key_columns();
+    _num_rows_per_row_block = ori_tablet_schema.num_rows_per_row_block();
+    _compress_kind = ori_tablet_schema.compress_kind();
+
+    // todo(yixiu): unique_id
+    _next_column_unique_id = ori_tablet_schema.next_column_unique_id();
+    _is_in_memory = ori_tablet_schema.is_in_memory();
+    _delete_sign_idx = ori_tablet_schema.delete_sign_idx();
+    _sequence_col_idx = ori_tablet_schema.sequence_col_idx();
+    _sort_type = ori_tablet_schema.sort_type();
+    _sort_col_num = ori_tablet_schema.sort_col_num();
+
+    // copy from table_schema_param
+    _num_columns = 0;
+    _num_key_columns = 0;
+    _num_null_columns = 0;
+    bool has_bf_columns = false;
+    _cols.clear();
+    _field_name_to_index.clear();
+    for (auto& pcolumn : ptable_schema_param.columns()) {
+        TabletColumn column;
+        column.init_from_pb(pcolumn);
+        if (column.is_key()) {
+            _num_key_columns++;
+        }
+        if (column.is_nullable()) {
+            _num_null_columns++;
+        }
+        if (column.is_bf_column()) {
+            has_bf_columns = true;
+        }
+        _field_name_to_index[column.name()] = _num_columns;
+        _cols.emplace_back(std::move(column));
+        _num_columns++;
+    }
+    if (has_bf_columns) {
+        _has_bf_fpp = true;
+        _bf_fpp = ori_tablet_schema.bloom_filter_fpp();
+    } else {
+        _has_bf_fpp = false;
+        _bf_fpp = BLOOM_FILTER_DEFAULT_FPP;
+    }
+}
+
+void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_meta_pb) const {
     tablet_meta_pb->set_keys_type(_keys_type);
     for (auto& col : _cols) {
         ColumnPB* column = tablet_meta_pb->add_column();

@@ -1303,7 +1303,8 @@ bool SchemaChangeWithSorting::_internal_sorting(const std::vector<RowBlock*>& ro
                 << ", block_row_size=" << new_tablet->num_rows_per_row_block();
 
     std::unique_ptr<RowsetWriter> rowset_writer;
-    if (!new_tablet->create_rowset_writer(version, VISIBLE, segments_overlap, &rowset_writer)) {
+    if (!new_tablet->create_rowset_writer(version, VISIBLE, segments_overlap,
+                                          &new_tablet->tablet_schema(), &rowset_writer)) {
         return false;
     }
 
@@ -1333,10 +1334,16 @@ bool SchemaChangeWithSorting::_external_sorting(vector<RowsetSharedPtr>& src_row
         }
         rs_readers.push_back(std::move(rs_reader));
     }
+    // get cur schema if rowset schema exist, rowset schema must be newer than tablet schema
+    auto max_version_rowset = src_rowsets.back();
+    const TabletSchema* cur_tablet_schema = max_version_rowset->rowset_meta()->tablet_schema();
+    if (cur_tablet_schema == nullptr) {
+        cur_tablet_schema = &(new_tablet->tablet_schema());
+    }
 
     Merger::Statistics stats;
-    auto res = Merger::merge_rowsets(new_tablet, READER_ALTER_TABLE, rs_readers, rowset_writer,
-                                     &stats);
+    auto res = Merger::merge_rowsets(new_tablet, READER_ALTER_TABLE, cur_tablet_schema, rs_readers,
+                                     rowset_writer, &stats);
     if (!res.ok()) {
         LOG(WARNING) << "failed to merge rowsets. tablet=" << new_tablet->full_name()
                      << ", version=" << rowset_writer->version().first << "-"
@@ -1705,9 +1712,10 @@ Status SchemaChangeHandler::schema_version_convert(TabletSharedPtr base_tablet,
     load_id.set_hi((*base_rowset)->load_id().hi());
     load_id.set_lo((*base_rowset)->load_id().lo());
     std::unique_ptr<RowsetWriter> rowset_writer;
-    RETURN_NOT_OK(new_tablet->create_rowset_writer(
-            (*base_rowset)->txn_id(), load_id, PREPARED,
-            (*base_rowset)->rowset_meta()->segments_overlap(), &rowset_writer));
+    RETURN_NOT_OK(
+            new_tablet->create_rowset_writer((*base_rowset)->txn_id(), load_id, PREPARED,
+                                             (*base_rowset)->rowset_meta()->segments_overlap(),
+                                             reader_context.tablet_schema, &rowset_writer));
 
     if ((res = sc_procedure->process(rowset_reader, rowset_writer.get(), new_tablet,
                                      base_tablet)) != Status::OK()) {
@@ -1833,7 +1841,8 @@ Status SchemaChangeHandler::_convert_historical_rowsets(const SchemaChangeParams
         std::unique_ptr<RowsetWriter> rowset_writer;
         Status status = new_tablet->create_rowset_writer(
                 rs_reader->version(), VISIBLE,
-                rs_reader->rowset()->rowset_meta()->segments_overlap(), &rowset_writer);
+                rs_reader->rowset()->rowset_meta()->segments_overlap(),
+                &new_tablet->tablet_schema(), &rowset_writer);
         if (!status.ok()) {
             res = Status::OLAPInternalError(OLAP_ERR_ROWSET_BUILDER_INIT);
             goto PROCESS_ALTER_EXIT;

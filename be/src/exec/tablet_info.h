@@ -58,6 +58,7 @@ public:
     int64_t version() const { return _version; }
 
     TupleDescriptor* tuple_desc() const { return _tuple_desc; }
+    const std::vector<TabletColumn*>& columns() const {return _columns;}
     const std::vector<OlapTableIndexSchema*>& indexes() const { return _indexes; }
 
     void to_protobuf(POlapTableSchemaParam* pschema) const;
@@ -81,6 +82,7 @@ private:
     TupleDescriptor* _tuple_desc = nullptr;
     mutable POlapTableSchemaParam* _proto_schema = nullptr;
     std::vector<OlapTableIndexSchema*> _indexes;
+    std::vector<TabletColumn*> _columns;
     mutable ObjectPool _obj_pool;
 };
 
