@@ -86,6 +86,7 @@ import org.apache.doris.persist.ReplaceTableOperationLog;
 import org.apache.doris.persist.ReplicaPersistInfo;
 import org.apache.doris.persist.RoutineLoadOperation;
 import org.apache.doris.persist.SetReplicaStatusOperationLog;
+import org.apache.doris.persist.TableAddOrDropColumnsInfo;
 import org.apache.doris.persist.TableInfo;
 import org.apache.doris.persist.TablePropertyInfo;
 import org.apache.doris.persist.TruncateTableInfo;
@@ -650,6 +651,11 @@ public class JournalEntity implements Writable {
             }
             case OperationType.OP_DROP_POLICY: {
                 data = DropPolicyLog.read(in);
+                isRead = true;
+                break;
+            }
+            case OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS: {
+                data = TableAddOrDropColumnsInfo.read(in);
                 isRead = true;
                 break;
             }

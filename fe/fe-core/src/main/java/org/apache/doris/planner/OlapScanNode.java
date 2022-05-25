@@ -55,6 +55,7 @@ import org.apache.doris.qe.SessionVariable;
 import org.apache.doris.resource.Tag;
 import org.apache.doris.statistics.StatsRecursiveDerive;
 import org.apache.doris.system.Backend;
+import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TExplainLevel;
 import org.apache.doris.thrift.TNetworkAddress;
 import org.apache.doris.thrift.TOlapScanNode;
@@ -755,6 +756,8 @@ public class OlapScanNode extends ScanNode {
     protected void toThrift(TPlanNode msg) {
         List<String> keyColumnNames = new ArrayList<String>();
         List<TPrimitiveType> keyColumnTypes = new ArrayList<TPrimitiveType>();
+        List<TColumn> columnsDesc = new ArrayList<TColumn>();
+
         if (selectedIndexId != -1) {
             for (Column col : olapTable.getSchemaByIndexId(selectedIndexId)) {
                 if (!col.isKey()) {
@@ -764,9 +767,14 @@ public class OlapScanNode extends ScanNode {
                 keyColumnTypes.add(col.getDataType().toThrift());
             }
         }
+
+        for (Column column : olapTable.getFullSchema()) {
+            columnsDesc.add(column.toThrift());
+        }
+
         msg.node_type = TPlanNodeType.OLAP_SCAN_NODE;
         msg.olap_scan_node =
-                new TOlapScanNode(desc.getId().asInt(), keyColumnNames, keyColumnTypes, isPreAggregation);
+                new TOlapScanNode(desc.getId().asInt(), keyColumnNames, keyColumnTypes, isPreAggregation, columnsDesc);
         if (null != sortColumn) {
             msg.olap_scan_node.setSortColumn(sortColumn);
         }

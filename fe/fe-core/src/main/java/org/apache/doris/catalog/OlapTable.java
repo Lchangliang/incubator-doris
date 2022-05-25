@@ -140,6 +140,8 @@ public class OlapTable extends Table {
 
     private TableProperty tableProperty;
 
+    private int maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
+
     public OlapTable() {
         // for persist
         super(TableType.OLAP);
@@ -188,6 +190,20 @@ public class OlapTable extends Table {
 
     public TableProperty getTableProperty() {
         return this.tableProperty;
+    }
+
+    //take care: only use at create olap table.
+    public int incAndGetMaxColUniqueId() {
+        this.maxColUniqueId++;
+        return this.maxColUniqueId;
+    }
+
+    public int getMaxColUniqueId() {
+        return this.maxColUniqueId;
+    }
+
+    public void setMaxtColUniqueId(int maxColUniqueId) {
+        this.maxColUniqueId = maxColUniqueId;
     }
 
     public boolean dynamicPartitionExists() {
@@ -1236,6 +1252,15 @@ public class OlapTable extends Table {
         // After that, some properties of fullSchema and nameToColumn may be not same as properties of base columns.
         // So, here we need to rebuild the fullSchema to ensure the correctness of the properties.
         rebuildFullSchema();
+
+        //calculate maxColUniqueId
+        int maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
+        for (Column column : getFullSchema()) {
+            if (column.getUniqueId() > maxColUniqueId) {
+                maxColUniqueId = column.getUniqueId();
+            }
+        }
+        this.maxColUniqueId = maxColUniqueId;
     }
 
     @Override
@@ -1480,6 +1505,20 @@ public class OlapTable extends Table {
             }
         }
         return null;
+    }
+
+    @Override
+    public void setNewFullSchema(List<Column> newSchema) {
+        this.fullSchema.clear();
+        this.fullSchema.addAll(newSchema);
+
+        this.nameToColumn.clear();
+        for (Column col : fullSchema) {
+            nameToColumn.put(col.getName(), col);
+        }
+
+        MaterializedIndexMeta baseIndexMeta = indexIdToMeta.get(baseIndexId);
+        baseIndexMeta.setSchema(fullSchema);
     }
 
     public int getKeysNum() {

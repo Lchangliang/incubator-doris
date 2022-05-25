@@ -23,7 +23,7 @@ namespace doris {
 
 Rowset::Rowset(const TabletSchema* schema, const FilePathDesc& rowset_path_desc,
                RowsetMetaSharedPtr rowset_meta)
-        : _schema(schema),
+        : //_schema(schema),
           _rowset_path_desc(rowset_path_desc),
           _rowset_meta(std::move(rowset_meta)),
           _refs_by_reader(0),
@@ -34,6 +34,12 @@ Rowset::Rowset(const TabletSchema* schema, const FilePathDesc& rowset_path_desc,
     } else {
         Version version = _rowset_meta->version();
         _is_cumulative = version.first != version.second;
+    }
+    // build schema from RowsetMeta.tablet_schema or Tablet.tablet_schema
+    if (_rowset_meta->tablet_schema() != nullptr) {
+        _schema = _rowset_meta->tablet_schema();
+    } else {
+        _schema = schema;
     }
 }
 

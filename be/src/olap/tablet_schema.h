@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <gen_cpp/Ddl_types.h>
 #include <vector>
 
 #include "gen_cpp/olap_file.pb.h"
@@ -28,18 +29,24 @@ namespace vectorized {
 class Block;
 }
 
+class POlapTableSchemaParam;
+
 class TabletColumn {
 public:
     TabletColumn();
+    TabletColumn(const ColumnPB& column);
+    TabletColumn(const TColumn& column);
     TabletColumn(FieldAggregationMethod agg, FieldType type);
     TabletColumn(FieldAggregationMethod agg, FieldType filed_type, bool is_nullable);
     TabletColumn(FieldAggregationMethod agg, FieldType filed_type, bool is_nullable,
                  int32_t unique_id, size_t length);
     void init_from_pb(const ColumnPB& column);
-    void to_schema_pb(ColumnPB* column);
+    void init_from_thrift(const TColumn& column);
+    void to_schema_pb(ColumnPB* column) const;
     uint32_t mem_size() const;
 
     int32_t unique_id() const { return _unique_id; }
+    int32_t col_unique_id() const { return _col_unique_id; }
     std::string name() const { return _col_name; }
     void set_name(std::string col_name) { _col_name = col_name; }
     FieldType type() const { return _type; }
@@ -109,6 +116,7 @@ private:
     TabletColumn* _parent = nullptr;
     std::vector<TabletColumn> _sub_columns;
     uint32_t _sub_column_count = 0;
+    int32_t _col_unique_id = -1;
 };
 
 bool operator==(const TabletColumn& a, const TabletColumn& b);
@@ -121,7 +129,8 @@ public:
     // void create_from_pb(const TabletSchemaPB& schema, TabletSchema* tablet_schema).
     TabletSchema() = default;
     void init_from_pb(const TabletSchemaPB& schema);
-    void to_schema_pb(TabletSchemaPB* tablet_meta_pb);
+    void to_schema_pb(TabletSchemaPB* tablet_meta_pb) const;
+    void append_column(TabletColumn column);
     uint32_t mem_size() const;
 
     size_t row_size() const;
@@ -138,6 +147,7 @@ public:
     size_t sort_col_num() const { return _sort_col_num; }
     CompressKind compress_kind() const { return _compress_kind; }
     size_t next_column_unique_id() const { return _next_column_unique_id; }
+    bool has_bf_fpp() const { return _has_bf_fpp; }
     double bloom_filter_fpp() const { return _bf_fpp; }
     bool is_in_memory() const { return _is_in_memory; }
     void set_is_in_memory(bool is_in_memory) { _is_in_memory = is_in_memory; }
@@ -145,9 +155,13 @@ public:
     void set_delete_sign_idx(int32_t delete_sign_idx) { _delete_sign_idx = delete_sign_idx; }
     bool has_sequence_col() const { return _sequence_col_idx != -1; }
     int32_t sequence_col_idx() const { return _sequence_col_idx; }
+    void clear_columns();
     vectorized::Block create_block(
             const std::vector<uint32_t>& return_columns,
             const std::unordered_set<uint32_t>* tablet_columns_need_convert_null = nullptr) const;
+
+    void build_current_tablet_schema(const POlapTableSchemaParam& ptable_schema_param,
+                                     const TabletSchema& out_tablet_schema);
 
 private:
     // Only for unit test.

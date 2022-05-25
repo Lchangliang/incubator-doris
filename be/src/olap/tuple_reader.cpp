@@ -77,13 +77,7 @@ Status TupleReader::init(const ReaderParams& read_params) {
     if (!status.ok()) {
         return status;
     }
-
-    if (_optimize_for_single_rowset(rs_readers)) {
-        _next_row_func = _tablet->keys_type() == AGG_KEYS ? &TupleReader::_direct_agg_key_next_row
-                                                          : &TupleReader::_direct_next_row;
-        return Status::OK();
-    }
-
+    
     switch (_tablet->keys_type()) {
     case KeysType::DUP_KEYS:
         _next_row_func = &TupleReader::_direct_next_row;
