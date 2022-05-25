@@ -224,7 +224,8 @@ Status PushHandler::_convert_v2(TabletSharedPtr cur_tablet, TabletSharedPtr new_
         // set this value to OVERLAP_UNKNOWN
         std::unique_ptr<RowsetWriter> rowset_writer;
         res = cur_tablet->create_rowset_writer(_request.transaction_id, load_id, PREPARED,
-                                               OVERLAP_UNKNOWN, &rowset_writer);
+                                               OVERLAP_UNKNOWN, &cur_tablet->tablet_schema(),
+                                               &rowset_writer);
         if (!res.ok()) {
             LOG(WARNING) << "failed to init rowset writer, tablet=" << cur_tablet->full_name()
                          << ", txn_id=" << _request.transaction_id << ", res=" << res;
@@ -389,7 +390,8 @@ Status PushHandler::_convert(TabletSharedPtr cur_tablet, TabletSharedPtr new_tab
         // 2. init RowsetBuilder of cur_tablet for current push
         std::unique_ptr<RowsetWriter> rowset_writer;
         res = cur_tablet->create_rowset_writer(_request.transaction_id, load_id, PREPARED,
-                                               OVERLAP_UNKNOWN, &rowset_writer);
+                                               OVERLAP_UNKNOWN, &cur_tablet->tablet_schema(),
+                                               &rowset_writer);
         if (!res.ok()) {
             LOG(WARNING) << "failed to init rowset writer, tablet=" << cur_tablet->full_name()
                          << ", txn_id=" << _request.transaction_id << ", res=" << res;

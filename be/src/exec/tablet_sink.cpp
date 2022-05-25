@@ -128,6 +128,7 @@ void NodeChannel::open() {
     request.set_index_id(_index_channel->_index_id);
     request.set_txn_id(_parent->_txn_id);
     request.set_allocated_schema(_parent->_schema->to_protobuf());
+    LOG(INFO) << "yixiu proto: " << _parent->_schema->to_protobuf()->DebugString();
     for (auto& tablet : _all_tablets) {
         auto ptablet = request.add_tablets();
         ptablet->set_partition_id(tablet.partition_id);
@@ -685,6 +686,7 @@ Status OlapTableSink::init(const TDataSink& t_sink) {
     _tuple_desc_id = table_sink.tuple_id;
     _schema.reset(new OlapTableSchemaParam());
     RETURN_IF_ERROR(_schema->init(table_sink.schema));
+    LOG(INFO) << "yixiu thrift:" << apache::thrift::ThriftDebugString(table_sink.schema);
     _partition = _pool->add(new OlapTablePartitionParam(_schema, table_sink.partition));
     RETURN_IF_ERROR(_partition->init());
     _location = _pool->add(new OlapTableLocationParam(table_sink.location));

@@ -22,6 +22,7 @@ include "Exprs.thrift"
 include "Types.thrift"
 include "Opcodes.thrift"
 include "Partitions.thrift"
+include "Descriptors.thrift"
 
 enum TPlanNodeType {
   OLAP_SCAN_NODE,
@@ -358,6 +359,7 @@ struct TOlapScanNode {
   5: optional string sort_column
   6: optional Types.TKeysType keyType
   7: optional string table_name
+  8: required list<Descriptors.TColumn> columns_desc
 }
 
 struct TEqJoinCondition {
