@@ -7597,5 +7597,13 @@ public class Catalog {
             olapTable.writeUnlock();
         }
     }
-
+    public TableName getTableNameByTableId(Long tableId) {
+        for (Database db : fullNameToDb.values()) {
+            Table table = db.getTableNullable(tableId);
+            if (table != null) {
+                return new TableName(db.getFullName(), table.getName());
+            }
+        }
+        return null;
+    }
 }
