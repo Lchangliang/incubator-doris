@@ -23,8 +23,7 @@ namespace doris {
 
 Rowset::Rowset(const TabletSchema* schema, const FilePathDesc& rowset_path_desc,
                RowsetMetaSharedPtr rowset_meta)
-        : //_schema(schema),
-          _rowset_path_desc(rowset_path_desc),
+        : _rowset_path_desc(rowset_path_desc),
           _rowset_meta(std::move(rowset_meta)),
           _refs_by_reader(0),
           _rowset_state_machine(RowsetStateMachine()) {
