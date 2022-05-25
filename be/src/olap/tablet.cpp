@@ -1553,7 +1553,8 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
     do {
         // there is no data in init rowset, so overlapping info is unknown.
         std::unique_ptr<RowsetWriter> rs_writer;
-        res = create_rowset_writer(version, VISIBLE, OVERLAP_UNKNOWN, &rs_writer);
+        res = create_rowset_writer(version, VISIBLE, OVERLAP_UNKNOWN, &_tablet_meta->tablet_schema(),
+                                   &rs_writer);
         if (!res.ok()) {
             LOG(WARNING) << "failed to init rowset writer for tablet " << full_name();
             break;
@@ -1584,11 +1585,13 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
 
 Status Tablet::create_rowset_writer(const Version& version, const RowsetStatePB& rowset_state,
                                     const SegmentsOverlapPB& overlap,
+                                    const doris::TabletSchema* tablet_schema,
                                     std::unique_ptr<RowsetWriter>* rowset_writer) {
     RowsetWriterContext context;
     context.version = version;
     context.rowset_state = rowset_state;
     context.segments_overlap = overlap;
+    context.tablet_schema = tablet_schema;
     _init_context_common_fields(context);
     return RowsetFactory::create_rowset_writer(context, rowset_writer);
 }
@@ -1596,12 +1599,14 @@ Status Tablet::create_rowset_writer(const Version& version, const RowsetStatePB&
 Status Tablet::create_rowset_writer(const int64_t& txn_id, const PUniqueId& load_id,
                                     const RowsetStatePB& rowset_state,
                                     const SegmentsOverlapPB& overlap,
+                                    const doris::TabletSchema* tablet_schema,
                                     std::unique_ptr<RowsetWriter>* rowset_writer) {
     RowsetWriterContext context;
     context.txn_id = txn_id;
     context.load_id = load_id;
     context.rowset_state = rowset_state;
     context.segments_overlap = overlap;
+    context.tablet_schema = tablet_schema;
     _init_context_common_fields(context);
     return RowsetFactory::create_rowset_writer(context, rowset_writer);
 }
@@ -1620,7 +1625,6 @@ void Tablet::_init_context_common_fields(RowsetWriterContext& context) {
         context.rowset_type = StorageEngine::instance()->default_rowset_type();
     }
     context.path_desc = tablet_path_desc();
-    context.tablet_schema = &(tablet_schema());
     context.data_dir = data_dir();
 }
 
@@ -1634,6 +1638,15 @@ std::shared_ptr<MemTracker>& Tablet::get_compaction_mem_tracker(CompactionType c
     } else {
         return _base_compaction->get_mem_tracker();
     }
+}
+
+const TabletSchema& Tablet::tablet_schema() const {
+    std::lock_guard<std::shared_mutex> wrlock(_meta_lock);
+    const RowsetSharedPtr last_rowset = rowset_with_max_version();
+    if (last_rowset == nullptr) {
+        return _schema;
+    }
+    return *last_rowset->tablet_schema();
 }
 
 } // namespace doris

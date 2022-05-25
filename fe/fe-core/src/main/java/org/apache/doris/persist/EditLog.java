@@ -846,6 +846,11 @@ public class EditLog {
                     catalog.getDataSourceMgr().replayAlterCatalogProps(log);
                     break;
                 }
+                case OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS: {
+                    final TableAddOrDropColumnsInfo info = (TableAddOrDropColumnsInfo) journal.getData();
+                    catalog.replayModifyTableAddOrDropColumns(info);
+                    break;
+                }
                 default: {
                     IOException e = new IOException();
                     LOG.error("UNKNOWN Operation Type {}", opCode, e);
@@ -1457,8 +1462,14 @@ public class EditLog {
     public void logDropPolicy(DropPolicyLog log) {
         logEdit(OperationType.OP_DROP_POLICY, log);
     }
+<<<<<<< HEAD
 
     public void logDatasourceLog(short id, CatalogLog log) {
         logEdit(id, log);
+=======
+    
+    public void logModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) {
+        logEdit(OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS, info);
+>>>>>>> bdea689a0 ([Schema Change] support fast add/drop column  (#49))
     }
 }

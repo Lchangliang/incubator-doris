@@ -104,6 +104,10 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
         }
     }
 
+    public void setSchema(List<Column> newSchema) {
+        this.schema = newSchema;
+    }
+
     public int getSchemaHash() {
         return schemaHash;
     }
