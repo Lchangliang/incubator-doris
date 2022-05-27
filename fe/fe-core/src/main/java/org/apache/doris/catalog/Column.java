@@ -357,6 +357,7 @@ public class Column implements Writable {
         toChildrenThrift(this, tColumn);
 
         tColumn.setColUniqueId(uniqueId);
+
         // ATTN:
         // Currently, this `toThrift()` method is only used from CreateReplicaTask.
         // And CreateReplicaTask does not need `defineExpr` field.

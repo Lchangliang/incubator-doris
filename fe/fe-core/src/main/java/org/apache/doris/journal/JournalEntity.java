@@ -659,6 +659,16 @@ public class JournalEntity implements Writable {
                 isRead = true;
                 break;
             }
+            case OperationType.OP_CREATE_POLICY: {
+                data = Policy.read(in);
+                isRead = true;
+                break;
+            }
+            case OperationType.OP_DROP_POLICY: {
+                data = DropPolicyLog.read(in);
+                isRead = true;
+                break;
+            }
             default: {
                 IOException e = new IOException();
                 LOG.error("UNKNOWN Operation Type {}", opCode, e);
