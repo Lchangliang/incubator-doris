@@ -7586,8 +7586,10 @@ public class Catalog {
             throw new DdlException("Nothing is changed. please check your alter stmt.");
         }
 
+        //update base index schema
         long baseIndexId = olapTable.getBaseIndexId();
-        olapTable.setNewFullSchema(indexSchemaMap.get(olapTable.getBaseIndexId()));
+        MaterializedIndexMeta baseIndexMeta = olapTable.getIndexMetaByIndexId(baseIndexId);
+        baseIndexMeta.setSchema(indexSchemaMap.get(baseIndexId));
 
         List<Long> indexIds = new ArrayList<Long>();
         indexIds.add(baseIndexId);
@@ -7599,6 +7601,8 @@ public class Catalog {
             currentIndexMeta.setSchema(rollupSchema);
         }
         olapTable.setIndexes(indexes);
+
+        olapTable.rebuildFullSchema();
 
         //update max column unique id
         int maxColUniqueId = olapTable.getMaxColUniqueId();
