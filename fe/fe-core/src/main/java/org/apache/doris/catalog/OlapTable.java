@@ -1512,20 +1512,6 @@ public class OlapTable extends Table {
         return null;
     }
 
-    @Override
-    public void setNewFullSchema(List<Column> newSchema) {
-        this.fullSchema.clear();
-        this.fullSchema.addAll(newSchema);
-
-        this.nameToColumn.clear();
-        for (Column col : fullSchema) {
-            nameToColumn.put(col.getName(), col);
-        }
-
-        MaterializedIndexMeta baseIndexMeta = indexIdToMeta.get(baseIndexId);
-        baseIndexMeta.setSchema(fullSchema);
-    }
-
     public int getKeysNum() {
         int keysNum = 0;
         for (Column column : getBaseSchema()) {
