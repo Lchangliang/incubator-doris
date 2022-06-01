@@ -140,6 +140,7 @@ public:
 
     size_t row_size() const;
     int32_t field_index(const std::string& field_name) const;
+    int32_t field_index(int32_t col_unique_id) const;
     const TabletColumn& column(size_t ordinal) const;
     const std::vector<TabletColumn>& columns() const;
     size_t num_columns() const { return _num_columns; }
@@ -184,6 +185,7 @@ private:
     size_t _sort_col_num = 0;
     std::vector<TabletColumn> _cols;
     std::unordered_map<std::string, int32_t> _field_name_to_index;
+    std::unordered_map<int32_t, int32_t> _field_id_to_index;
     size_t _num_columns = 0;
     size_t _num_key_columns = 0;
     size_t _num_null_columns = 0;

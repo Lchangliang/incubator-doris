@@ -24,6 +24,8 @@
 #include "gen_cpp/PaloInternalService_types.h"
 #include "olap/decimal12.h"
 #include "olap/storage_engine.h"
+#include "olap/field.h"
+#include "olap/tablet_schema.h"
 #include "olap/uint24.h"
 #include "olap_scan_node.h"
 #include "olap_utils.h"
@@ -250,8 +252,9 @@ Status OlapScanner::_init_return_columns(bool need_seq_col) {
         if (!slot->is_materialized()) {
             continue;
         }
-        int32_t index = slot->col_unique_id() >= 0 ? slot->col_unique_id()
-                                                   : _tablet_schema.field_index(slot->col_name());
+        int32_t index = slot->col_unique_id() >= 0
+                                ? _tablet_schema.field_index(slot->col_unique_id())
+                                : _tablet_schema.field_index(slot->col_name());
         if (index < 0) {
             std::stringstream ss;
             ss << "field name is invalid. field=" << slot->col_name();

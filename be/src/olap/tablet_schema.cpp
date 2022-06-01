@@ -449,12 +449,14 @@ void TabletSchema::append_column(TabletColumn column) {
         _num_null_columns++;
     }
     _field_name_to_index[column.name()] = _num_columns;
+    _field_id_to_index[column.col_unique_id()] = _num_columns;
     _cols.push_back(std::move(column));
     _num_columns++;
 }
 
 void TabletSchema::clear_columns() {
     _field_name_to_index.clear();
+    _field_id_to_index.clear();
     _num_columns = 0;
     _num_null_columns = 0;
     _num_key_columns = 0;
@@ -595,6 +597,11 @@ size_t TabletSchema::row_size() const {
 int32_t TabletSchema::field_index(const std::string& field_name) const {
     const auto& found = _field_name_to_index.find(field_name);
     return (found == _field_name_to_index.end()) ? -1 : found->second;
+}
+
+int32_t TabletSchema::field_index(int32_t col_unique_od) const {
+    const auto& found = _field_id_to_index.find(col_unique_od);
+    return (found == _field_id_to_index.end()) ? -1 : found->second;
 }
 
 const std::vector<TabletColumn>& TabletSchema::columns() const {
