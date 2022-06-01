@@ -1157,6 +1157,7 @@ public class OlapTable extends Table {
         }
 
         tempPartitions.write(out);
+        out.writeInt(maxColUniqueId);
     }
 
     @Override
@@ -1248,19 +1249,14 @@ public class OlapTable extends Table {
             }
         }
         tempPartitions.unsetPartitionInfo();
+
+        if (Catalog.getCurrentCatalogJournalVersion() >= FeMetaVersion.VERSION_109) {
+            maxColUniqueId = in.readInt();
+        }
         // In the present, the fullSchema could be rebuilt by schema change while the properties is changed by MV.
         // After that, some properties of fullSchema and nameToColumn may be not same as properties of base columns.
         // So, here we need to rebuild the fullSchema to ensure the correctness of the properties.
         rebuildFullSchema();
-
-        //calculate maxColUniqueId
-        int maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
-        for (Column column : getFullSchema()) {
-            if (column.getUniqueId() > maxColUniqueId) {
-                maxColUniqueId = column.getUniqueId();
-            }
-        }
-        this.maxColUniqueId = maxColUniqueId;
     }
 
     @Override
