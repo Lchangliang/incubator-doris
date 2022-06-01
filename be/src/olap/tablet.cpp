@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <map>
 #include <set>
+#include <shared_mutex>
 
 #include "olap/base_compaction.h"
 #include "olap/cumulative_compaction.h"
@@ -1607,7 +1608,7 @@ std::shared_ptr<MemTracker>& Tablet::get_compaction_mem_tracker(CompactionType c
 }
 
 const TabletSchema& Tablet::tablet_schema() const {
-    std::lock_guard<std::shared_mutex> wrlock(_meta_lock);
+    std::shared_lock wrlock(_meta_lock);
     const RowsetSharedPtr last_rowset = rowset_with_max_version();
     if (last_rowset == nullptr) {
         return _schema;
