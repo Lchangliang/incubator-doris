@@ -36,7 +36,7 @@ public final class FeMetaVersion {
     public static final int VERSION_107 = 107;
     // add storage_cold_medium and remote_storage_resource_name in DataProperty
     public static final int VERSION_108 = 108;
-    // add row policy
+    // add row policy and add maxColUniqueId for olapTable
     public static final int VERSION_109 = 109;
     // For routine load user info
     public static final int VERSION_110 = 110;
