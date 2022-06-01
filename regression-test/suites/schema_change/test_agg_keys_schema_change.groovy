@@ -150,7 +150,7 @@ suite ("test_agg_keys_schema_change") {
             logger.info("run compaction:" + tablet_id)
             StringBuilder sb = new StringBuilder();
             sb.append("curl -X POST http://")
-            sb.append("192.168.0.21:8041")
+            sb.append(context.config.beHttpAddress)
             sb.append("/api/compaction/run?tablet_id=")
             sb.append(tablet_id)
             sb.append("&compact_type=cumulative")
@@ -172,7 +172,7 @@ suite ("test_agg_keys_schema_change") {
                 String tablet_id = tablet[0]
                 StringBuilder sb = new StringBuilder();
                 sb.append("curl -X GET http://")
-                sb.append("192.168.0.21:8041")
+                sb.append(context.config.beHttpAddress)
                 sb.append("/api/compaction/run_status?tablet_id=")
                 sb.append(tablet_id)
 
@@ -201,7 +201,7 @@ suite ("test_agg_keys_schema_change") {
             String tablet_id = tablet[0]
             StringBuilder sb = new StringBuilder();
             sb.append("curl -X GET http://")
-            sb.append("192.168.0.21:8041")
+            sb.append(context.config.beHttpAddress)
             sb.append("/api/compaction/show?tablet_id=")
             sb.append(tablet_id)
             String command = sb.toString()
