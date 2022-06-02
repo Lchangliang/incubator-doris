@@ -465,7 +465,7 @@ public class LoadChecker extends MasterDaemon {
                                                                       needDecompress, job.getPriority(),
                                                                       TTaskType.REALTIME_PUSH,
                                                                       job.getTransactionId(),
-                                                                      Catalog.getCurrentGlobalTransactionMgr().getTransactionIDGenerator().getNextTransactionId());
+                                                                      Catalog.getCurrentGlobalTransactionMgr().getTransactionIDGenerator().getNextTransactionId(), null);
                                     pushTask.setIsSchemaChanging(autoLoadToTwoTablet);
                                     if (AgentTaskQueue.addTask(pushTask)) {
                                         batchTask.addTask(pushTask);

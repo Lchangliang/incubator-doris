@@ -319,14 +319,9 @@ public class SchemaChangeHandler extends AlterHandler {
                 for (Column column : targetIndexSchema) {
                     if (column.isKey() && column.getName().equalsIgnoreCase(dropColName)) {
                         isKey = true;
-<<<<<<< HEAD
-                    } else if (AggregateType.REPLACE == column.getAggregationType()
-                            || AggregateType.REPLACE_IF_NOT_NULL == column.getAggregationType()) {
-=======
                         ligthSchemaChange = false;
                     } else if (AggregateType.REPLACE == column.getAggregationType() ||
                             AggregateType.REPLACE_IF_NOT_NULL == column.getAggregationType()) {
->>>>>>> cb239ec4a ([feature](schema change) light schema change exclude rollup and agg/uniq/dup key type.)
                         hasReplaceColumn = true;
                     }
                 }
