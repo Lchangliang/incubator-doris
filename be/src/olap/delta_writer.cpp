@@ -123,8 +123,7 @@ Status DeltaWriter::init() {
     _build_current_tablet_schema(_req.ptable_schema_param, _tablet->tablet_schema());
 
     RETURN_NOT_OK(_tablet->create_rowset_writer(_req.txn_id, _req.load_id, PREPARED, OVERLAPPING,
-                                                &_tablet->tablet_schema(), &_rowset_writer));
-    _tablet_schema = &(_tablet->tablet_schema());
+                                                _tablet_schema.get(), &_rowset_writer));
     _schema.reset(new Schema(*_tablet_schema));
     _reset_mem_table();
 
