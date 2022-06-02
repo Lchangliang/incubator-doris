@@ -26,6 +26,7 @@ import org.apache.doris.analysis.Predicate;
 import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.common.MarkedCountDownLatch;
 import org.apache.doris.thrift.TBrokerScanRange;
+import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TCondition;
 import org.apache.doris.thrift.TDescriptorTable;
 import org.apache.doris.thrift.TPriority;
@@ -69,11 +70,14 @@ public class PushTask extends AgentTask {
     private TBrokerScanRange tBrokerScanRange;
     private TDescriptorTable tDescriptorTable;
 
+    // for light schema change
+    private List<TColumn> columnsDesc = null;
+
     public PushTask(TResourceInfo resourceInfo, long backendId, long dbId, long tableId, long partitionId,
                     long indexId, long tabletId, long replicaId, int schemaHash, long version,
                     String filePath, long fileSize, int timeoutSecond, long loadJobId, TPushType pushType,
                     List<Predicate> conditions, boolean needDecompress, TPriority priority, TTaskType taskType,
-                    long transactionId, long signature) {
+                    long transactionId, long signature, List<TColumn> columnsDesc) {
         super(resourceInfo, backendId, taskType, dbId, tableId, partitionId, indexId, tabletId, signature);
         this.replicaId = replicaId;
         this.schemaHash = schemaHash;
@@ -92,6 +96,7 @@ public class PushTask extends AgentTask {
         this.transactionId = transactionId;
         this.tBrokerScanRange = null;
         this.tDescriptorTable = null;
+        this.columnsDesc = columnsDesc;
     }
 
     // for load v2 (SparkLoadJob)
@@ -100,9 +105,9 @@ public class PushTask extends AgentTask {
                     TPriority priority, long transactionId, long signature,
                     TBrokerScanRange tBrokerScanRange, TDescriptorTable tDescriptorTable) {
         this(null, backendId, dbId, tableId, partitionId, indexId,
-                tabletId, replicaId, schemaHash, -1, null,
-                0, timeoutSecond, loadJobId, pushType, null, false,
-                priority, TTaskType.REALTIME_PUSH, transactionId, signature);
+             tabletId, replicaId, schemaHash, -1, null,
+             0, timeoutSecond, loadJobId, pushType, null, false,
+             priority, TTaskType.REALTIME_PUSH, transactionId, signature, null);
         this.tBrokerScanRange = tBrokerScanRange;
         this.tDescriptorTable = tDescriptorTable;
     }
@@ -162,6 +167,7 @@ public class PushTask extends AgentTask {
                     tConditions.add(tCondition);
                 }
                 request.setDeleteConditions(tConditions);
+                request.setColumnsDesc(columnsDesc);
                 break;
             case LOAD_V2:
                 request.setBrokerScanRange(tBrokerScanRange);

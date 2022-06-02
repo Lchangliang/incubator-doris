@@ -65,6 +65,7 @@ import org.apache.doris.task.AgentBatchTask;
 import org.apache.doris.task.AgentTaskExecutor;
 import org.apache.doris.task.AgentTaskQueue;
 import org.apache.doris.task.PushTask;
+import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TPriority;
 import org.apache.doris.thrift.TPushType;
 import org.apache.doris.thrift.TTaskType;
@@ -219,6 +220,12 @@ public class DeleteHandler implements Writable {
                 // to make sure that the delete transaction can be done successfully.
                 txnState.addTableIndexes(olapTable);
 
+                //for light schema change
+                List<TColumn> columnsDesc = new ArrayList<TColumn>();
+                for (Column column : olapTable.getFullSchema()) {
+                    columnsDesc.add(column.toThrift());
+                }
+
                 // task sent to be
                 AgentBatchTask batchTask = new AgentBatchTask();
                 // count total replica num
@@ -260,7 +267,8 @@ public class DeleteHandler implements Writable {
                                         TTaskType.REALTIME_PUSH,
                                         transactionId,
                                         Catalog.getCurrentGlobalTransactionMgr()
-                                                .getTransactionIDGenerator().getNextTransactionId());
+                                                .getTransactionIDGenerator().getNextTransactionId(),
+                                        columnsDesc);
                                 pushTask.setIsSchemaChanging(false);
                                 pushTask.setCountDownLatch(countDownLatch);
 
