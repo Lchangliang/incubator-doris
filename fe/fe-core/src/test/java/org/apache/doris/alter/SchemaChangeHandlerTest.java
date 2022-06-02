@@ -48,8 +48,6 @@ import com.google.common.collect.Sets;
 
 import mockit.Expectations;
 import mockit.Injectable;
-import org.junit.Assert;
-import org.junit.Test;
 
 import java.util.List;
 import java.util.Map;

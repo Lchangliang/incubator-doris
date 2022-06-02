@@ -812,16 +812,6 @@ public class EditLog {
                     catalog.getAlterInstance().replayProcessModifyEngine(log);
                     break;
                 }
-                case OperationType.OP_CREATE_POLICY: {
-                    RowPolicy log = (RowPolicy) journal.getData();
-                    catalog.getPolicyMgr().replayCreate(log);
-                    break;
-                }
-                case OperationType.OP_DROP_POLICY: {
-                    DropPolicyLog log = (DropPolicyLog) journal.getData();
-                    catalog.getPolicyMgr().replayDrop(log);
-                    break;
-                }
                 case OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS: {
                     final TableAddOrDropColumnsInfo info = (TableAddOrDropColumnsInfo) journal.getData();
                     catalog.replayModifyTableAddOrDropColumns(info);

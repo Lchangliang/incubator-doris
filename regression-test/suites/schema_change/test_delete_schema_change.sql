@@ -27,11 +27,11 @@ INSERT INTO schema_change_delete_regression_test VALUES
 INSERT INTO schema_change_delete_regression_test VALUES
              (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20);
 
-SELECT * FROM schema_change_delete_regression_test;
+SELECT * FROM schema_change_delete_regression_test order by user_id ASC, last_visit_date;
 
 ALTER table schema_change_delete_regression_test ADD COLUMN new_column INT default "1";
 
-SELECT * FROM schema_change_delete_regression_test;
+SELECT * FROM schema_change_delete_regression_test order by user_id DESC, last_visit_date;
 
 DELETE FROM schema_change_delete_regression_test where new_column = 1;
 
