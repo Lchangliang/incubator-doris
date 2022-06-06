@@ -117,12 +117,16 @@ Status PushHandler::_do_streaming_ingestion(TabletSharedPtr tablet, const TPushR
 
             DeletePredicatePB del_pred;
             DeleteConditionHandler del_cond_handler;
-            {
-                std::shared_lock rdlock(tablet_var.tablet->get_header_lock());
-                res = del_cond_handler.generate_delete_predicate(
-                        tablet_var.tablet->tablet_schema(), request.delete_conditions, &del_pred);
-                del_preds.push(del_pred);
+            auto tablet_schema = tablet_var.tablet->tablet_schema();
+            if (!request.columns_desc.empty() && request.columns_desc[0].col_unique_id >= 0) {
+                tablet_schema.clear_columns();
+                for (const auto& column_desc : request.columns_desc) {
+                    tablet_schema.append_column(TabletColumn(column_desc));
+                }
             }
+            res = del_cond_handler.generate_delete_predicate(tablet_schema,
+                                                             request.delete_conditions, &del_pred);
+            del_preds.push(del_pred);
             if (!res.ok()) {
                 LOG(WARNING) << "fail to generate delete condition. res=" << res
                              << ", tablet=" << tablet_var.tablet->full_name();
