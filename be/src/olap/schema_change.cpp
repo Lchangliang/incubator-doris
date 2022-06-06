@@ -1814,13 +1814,8 @@ Status SchemaChangeHandler::_convert_historical_rowsets(const SchemaChangeParams
         std::unique_ptr<RowsetWriter> rowset_writer;
         Status status = new_tablet->create_rowset_writer(
                 rs_reader->version(), VISIBLE,
-<<<<<<< HEAD
                 rs_reader->rowset()->rowset_meta()->segments_overlap(),
                 &new_tablet->tablet_schema(), &rowset_writer);
-=======
-                rs_reader->rowset()->rowset_meta()->segments_overlap(), &new_tablet->tablet_schema(),
-                &rowset_writer);
->>>>>>> df84fd6ba ([Schema Change] Merge selectdb/master (#90))
         if (!status.ok()) {
             res = Status::OLAPInternalError(OLAP_ERR_ROWSET_BUILDER_INIT);
             goto PROCESS_ALTER_EXIT;
