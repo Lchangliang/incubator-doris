@@ -263,18 +263,18 @@ public:
 
     void find_alpha_rowsets(std::vector<RowsetSharedPtr>* rowsets) const;
 
+    const TabletSchema& tablet_schema() const override;
+    
     Status create_rowset_writer(const Version& version, const RowsetStatePB& rowset_state,
-                                const SegmentsOverlapPB& overlap,
-                                const doris::TabletSchema* tablet_schema,
+                                const SegmentsOverlapPB& overlap, const TabletSchema* tablet_schema,
                                 std::unique_ptr<RowsetWriter>* rowset_writer);
 
     Status create_rowset_writer(const int64_t& txn_id, const PUniqueId& load_id,
                                 const RowsetStatePB& rowset_state, const SegmentsOverlapPB& overlap,
-                                const doris::TabletSchema* tablet_schema,
+                                const TabletSchema* tablet_schema,
                                 std::unique_ptr<RowsetWriter>* rowset_writer);
 
     Status create_rowset(RowsetMetaSharedPtr rowset_meta, RowsetSharedPtr* rowset);
-    const TabletSchema& tablet_schema() const override;
 
 private:
     Status _init_once_action();

@@ -1430,6 +1430,10 @@ public class EditLog {
         logEdit(OperationType.OP_MODIFY_TABLE_ENGINE, log);
     }
 
+    public void logModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) {
+        logEdit(OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS, info);
+    }
+
     public void logCreatePolicy(Policy policy) {
         if (policy instanceof RowPolicy) {
             logEdit(OperationType.OP_CREATE_POLICY, policy);
@@ -1440,9 +1444,5 @@ public class EditLog {
 
     public void logDropPolicy(DropPolicyLog log) {
         logEdit(OperationType.OP_DROP_POLICY, log);
-    }
-    
-    public void logModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) {
-        logEdit(OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS, info);
     }
 }
