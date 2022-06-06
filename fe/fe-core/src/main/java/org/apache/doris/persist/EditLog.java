@@ -811,16 +811,6 @@ public class EditLog {
                     catalog.getAlterInstance().replayProcessModifyEngine(log);
                     break;
                 }
-                case OperationType.OP_CREATE_POLICY: {
-                    Policy log = (Policy) journal.getData();
-                    catalog.getPolicyMgr().replayCreate(log);
-                    break;
-                }
-                case OperationType.OP_DROP_POLICY: {
-                    DropPolicyLog log = (DropPolicyLog) journal.getData();
-                    catalog.getPolicyMgr().replayDrop(log);
-                    break;
-                }
                 case OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS: {
                     final TableAddOrDropColumnsInfo info = (TableAddOrDropColumnsInfo) journal.getData();
                     catalog.replayModifyTableAddOrDropColumns(info);
@@ -1429,15 +1419,15 @@ public class EditLog {
         logEdit(OperationType.OP_MODIFY_TABLE_ENGINE, log);
     }
 
+    public void logModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) {
+        logEdit(OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS, info);
+    }
+
     public void logCreatePolicy(Policy policy) {
         logEdit(OperationType.OP_CREATE_POLICY, policy);
     }
 
     public void logDropPolicy(DropPolicyLog log) {
         logEdit(OperationType.OP_DROP_POLICY, log);
-    }
-    
-    public void logModifyTableAddOrDropColumns(TableAddOrDropColumnsInfo info) {
-        logEdit(OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS, info);
     }
 }
