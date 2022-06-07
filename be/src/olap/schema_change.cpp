@@ -1362,6 +1362,7 @@ Status SchemaChangeHandler::_do_process_alter_tablet_v2(const TAlterTabletReqV2&
     // delete handlers for new tablet
     DeleteHandler delete_handler;
     std::vector<ColumnId> return_columns;
+    auto base_tablet_schema = base_tablet->tablet_schema();
 
     // begin to find deltas to convert from base tablet to new tablet so that
     // obtain base tablet and new tablet's push lock and header write lock to prevent loading data
@@ -1372,7 +1373,7 @@ Status SchemaChangeHandler::_do_process_alter_tablet_v2(const TAlterTabletReqV2&
         std::lock_guard<std::shared_mutex> new_tablet_wlock(new_tablet->get_header_lock());
         // check if the tablet has alter task
         // if it has alter task, it means it is under old alter process
-        size_t num_cols = base_tablet->tablet_schema().num_columns();
+        size_t num_cols = base_tablet_schema.num_columns();
         return_columns.resize(num_cols);
         for (int i = 0; i < num_cols; ++i) {
             return_columns[i] = i;
@@ -1382,7 +1383,7 @@ Status SchemaChangeHandler::_do_process_alter_tablet_v2(const TAlterTabletReqV2&
         // with rs_readers
         RowsetReaderContext reader_context;
         reader_context.reader_type = READER_ALTER_TABLE;
-        reader_context.tablet_schema = &base_tablet->tablet_schema();
+        reader_context.tablet_schema = &base_tablet_schema;
         reader_context.need_ordered_result = true;
         reader_context.delete_handler = &delete_handler;
         reader_context.return_columns = &return_columns;
@@ -1765,14 +1766,9 @@ Status SchemaChangeHandler::_convert_historical_rowsets(const SchemaChangeParams
         std::unique_ptr<RowsetWriter> rowset_writer;
         Status status = new_tablet->create_rowset_writer(
                 rs_reader->version(), VISIBLE,
-<<<<<<< HEAD
-                rs_reader->rowset()->rowset_meta()->segments_overlap(), &rowset_writer);
-        if (!status) {
-=======
                 rs_reader->rowset()->rowset_meta()->segments_overlap(),
                 &new_tablet->tablet_schema(), &rowset_writer);
-        if (!status.ok()) {
->>>>>>> 23876d5a2 ([Schema Change] support fast add/drop column  (#49))
+        if (!Status) {
             res = Status::OLAPInternalError(OLAP_ERR_ROWSET_BUILDER_INIT);
             return process_alter_exit();
         }
