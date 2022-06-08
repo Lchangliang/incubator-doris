@@ -17,7 +17,6 @@
 
 #include "olap/compaction.h"
 
-#include "delta_writer.h"
 #include "gutil/strings/substitute.h"
 #include "util/time.h"
 #include "util/trace.h"

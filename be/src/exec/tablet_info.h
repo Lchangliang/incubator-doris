@@ -31,6 +31,7 @@
 #include "runtime/raw_value.h"
 #include "runtime/tuple.h"
 #include "vec/core/block.h"
+#include "olap/tablet_schema.h"
 
 namespace doris {
 
