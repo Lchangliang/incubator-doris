@@ -45,6 +45,7 @@ import org.apache.doris.common.Status;
 import org.apache.doris.common.UserException;
 import org.apache.doris.system.Backend;
 import org.apache.doris.system.SystemInfoService;
+import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TDataSink;
 import org.apache.doris.thrift.TDataSinkType;
 import org.apache.doris.thrift.TExplainLevel;
@@ -193,7 +194,9 @@ public class OlapTableSink extends DataSink {
         }
         // add columns
         for (Column col : table.getFullSchema()) {
-            schemaParam.addToColumns(col.toThrift());
+            TColumn tColumn = col.toThrift();
+            col.setIndexFlag(tColumn, table.getIndexes());
+            schemaParam.addToColumns(tColumn);
         }
         return schemaParam;
     }
