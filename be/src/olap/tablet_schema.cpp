@@ -18,7 +18,6 @@
 #include "olap/tablet_schema.h"
 
 #include "gen_cpp/descriptors.pb.h"
-#include "olap/types.h"
 #include "tablet_meta.h"
 #include "vec/aggregate_functions/aggregate_function_reader.h"
 #include "vec/aggregate_functions/aggregate_function_simple_factory.h"

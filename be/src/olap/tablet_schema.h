@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <gen_cpp/Ddl_types.h>
 #include <vector>
 
 #include "gen_cpp/olap_file.pb.h"
