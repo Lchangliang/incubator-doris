@@ -20,6 +20,7 @@ package org.apache.doris.catalog;
 import org.apache.doris.alter.SchemaChangeHandler;
 import org.apache.doris.analysis.DefaultValueExprDef;
 import org.apache.doris.analysis.Expr;
+import org.apache.doris.analysis.IndexDef;
 import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.analysis.StringLiteral;
 import org.apache.doris.common.AnalysisException;
@@ -705,5 +706,16 @@ public class Column implements Writable {
     }
     public int getUniqueId() {
         return this.uniqueId;
+    }
+
+    public void setIndexFlag(TColumn tColumn, List<Index> indexes) {
+        for (Index index : indexes) {
+            if (index.getIndexType() == IndexDef.IndexType.BITMAP) {
+                List<String> columns = index.getColumns();
+                if (tColumn.getColumnName().equals(columns.get(0))) {
+                    tColumn.setHasBitmapIndex(true);
+                }
+            }
+        }
     }
 }
