@@ -769,7 +769,9 @@ public class OlapScanNode extends ScanNode {
         }
 
         for (Column column : olapTable.getFullSchema()) {
-            columnsDesc.add(column.toThrift());
+            TColumn tColumn = column.toThrift();
+            column.setIndexFlag(tColumn, olapTable.getIndexes());
+            columnsDesc.add(tColumn);
         }
 
         msg.node_type = TPlanNodeType.OLAP_SCAN_NODE;
