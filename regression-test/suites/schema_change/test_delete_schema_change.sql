@@ -19,13 +19,7 @@ INSERT INTO schema_change_delete_regression_test VALUES
              (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20);
 
 INSERT INTO schema_change_delete_regression_test VALUES
-             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 19);
-
-INSERT INTO schema_change_delete_regression_test VALUES
              (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 21);
-
-INSERT INTO schema_change_delete_regression_test VALUES
-             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20);
 
 SELECT * FROM schema_change_delete_regression_test order by user_id ASC, last_visit_date;
 
@@ -33,6 +27,18 @@ ALTER table schema_change_delete_regression_test ADD COLUMN new_column INT defau
 
 SELECT * FROM schema_change_delete_regression_test order by user_id DESC, last_visit_date;
 
+INSERT INTO schema_change_delete_regression_test VALUES
+             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 19, 2);
+
+INSERT INTO schema_change_delete_regression_test VALUES
+             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2);
+
+INSERT INTO schema_change_delete_regression_test VALUES
+             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 1);
+
+INSERT INTO schema_change_delete_regression_test VALUES
+             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2);
+             
 DELETE FROM schema_change_delete_regression_test where new_column = 1;
 
-SELECT * FROM schema_change_delete_regression_test;
+SELECT * FROM schema_change_delete_regression_test order by user_id DESC, last_visit_date;
