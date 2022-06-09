@@ -281,6 +281,7 @@ public class SchemaChangeHandler extends AlterHandler {
             boolean isKey = false;
             for (Column column : baseSchema) {
                 if (column.isKey() && column.getName().equalsIgnoreCase(dropColName)) {
+                    ligthSchemaChange = false;
                     isKey = true;
                     break;
                 }
@@ -327,6 +328,17 @@ public class SchemaChangeHandler extends AlterHandler {
                 }
                 if (isKey && hasReplaceColumn) {
                     throw new DdlException("Can not drop key column when rollup has value column with REPLACE aggregation metho");
+                }
+            }
+        } else if (KeysType.DUP_KEYS == olapTable.getKeysType()){
+            long baseIndexId = olapTable.getBaseIndexId();
+            List<Column> baseSchema = indexSchemaMap.get(baseIndexId);
+            boolean isKey = false;
+            for (Column column : baseSchema) {
+                if (column.isKey() && column.getName().equalsIgnoreCase(dropColName)) {
+                    isKey = true;
+                    ligthSchemaChange = false;
+                    break;
                 }
             }
         }
