@@ -17,8 +17,8 @@
 
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
-suite ("test_uniq_keys_schema_change") {
-    def tableName = "schema_change_uniq_keys_regression_test"
+suite ("test_agg_vals_schema_change") {
+    def tableName = "schema_change_agg_vals_regression_test"
 
     try {
     sql """ DROP TABLE IF EXISTS ${tableName} """
@@ -30,117 +30,116 @@ suite ("test_uniq_keys_schema_change") {
                 `city` VARCHAR(20) COMMENT "用户所在城市",
                 `age` SMALLINT COMMENT "用户年龄",
                 `sex` TINYINT COMMENT "用户性别",
-                `last_visit_date` DATETIME DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
-                `last_update_date` DATETIME DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次更新时间",
-                `last_visit_date_not_null` DATETIME NOT NULL DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
-                `cost` BIGINT DEFAULT "0" COMMENT "用户总消费",
-                `max_dwell_time` INT DEFAULT "0" COMMENT "用户最大停留时间",
-                `min_dwell_time` INT DEFAULT "99999" COMMENT "用户最小停留时间")
-            UNIQUE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
+                `last_visit_date` DATETIME REPLACE DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
+                `last_update_date` DATETIME REPLACE DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次更新时间",
+                `last_visit_date_not_null` DATETIME REPLACE NOT NULL DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
+                `cost` BIGINT SUM DEFAULT "0" COMMENT "用户总消费",
+                `max_dwell_time` INT MAX DEFAULT "0" COMMENT "用户最大停留时间",
+                `min_dwell_time` INT MIN DEFAULT "99999" COMMENT "用户最小停留时间",
+                `hll_col` HLL HLL_UNION NOT NULL COMMENT "HLL列",
+                `bitmap_col` Bitmap BITMAP_UNION NOT NULL COMMENT "bitmap列")
+            AGGREGATE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
             PROPERTIES ( "replication_num" = "1" );
         """
 
     sql """ INSERT INTO ${tableName} VALUES
-             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20)
+             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20, hll_hash(1), to_bitmap(1))
         """
 
     sql """ INSERT INTO ${tableName} VALUES
-             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 19)
+             (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 19, hll_hash(2), to_bitmap(2))
         """
 
     sql """ INSERT INTO ${tableName} VALUES
-             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 21)
+             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 21, hll_hash(2), to_bitmap(2))
         """
 
     sql """ INSERT INTO ${tableName} VALUES
-             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
+             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(3), to_bitmap(3))
         """
-    def result = sql """
-                       select count(*) from ${tableName}
+    def result1 = sql """
+                       select * from ${tableName}
                     """
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 1)
-    assertTrue(result[0][0] == 2, "total columns should be 2 rows")
+    assertTrue(result1.size() == 2)
+    assertTrue(result1[0].size() == 13)
+    assertTrue(result1[0][8] == 2, "user id 1 cost should be 2")
+    assertTrue(result1[1][8] == 2, "user id 2 cost should be 2")
 
     // add column
     sql """
-        ALTER table ${tableName} ADD COLUMN new_column INT default "1" 
+        ALTER table ${tableName} ADD COLUMN new_column INT MAX default "1" 
         """
 
-    sql """ SELECT * FROM ${tableName} WHERE user_id=2 """
+    def result2 = sql """ SELECT * FROM ${tableName} WHERE user_id=2 """
+    assertTrue(result1[0][8] == 2, "user id 2 cost should be 2")
+
+    sql """ INSERT INTO ${tableName} VALUES
+             (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(4), to_bitmap(4), 2)
+        """
+    result2 = sql """ SELECT * FROM ${tableName} WHERE user_id=2 """
+    assertTrue(result2[0][8] == 3, "user id 2 cost should be 3")
+
 
     sql """ INSERT INTO ${tableName} (`user_id`,`date`,`city`,`age`,`sex`,`last_visit_date`,`last_update_date`,
-                                      `last_visit_date_not_null`,`cost`,`max_dwell_time`,`min_dwell_time`)
+                                      `last_visit_date_not_null`,`cost`,`max_dwell_time`,`min_dwell_time`, `hll_col`, `bitmap_col`)
             VALUES
-             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
+             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(4), to_bitmap(4))
         """
 
-    result = sql """ SELECT * FROM ${tableName} WHERE user_id=3 """
+    result2 = sql """ SELECT * FROM ${tableName} WHERE user_id=3 """
 
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
-    assertTrue(result[0][11] == 1, "new add column default value should be 1")
-
+    assertTrue(result2.size() == 1)
+    assertTrue(result2[0].size() == 14)
+    assertTrue(result2[0][13] == 1, "new add column default value should be 1")
 
     sql """ INSERT INTO ${tableName} VALUES
-             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(4), to_bitmap(4), 2)
         """
-    result = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
+    def result3 = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
 
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
-    assertTrue(result[0][11] == 2, "new add column value is set to 2")
+    assertTrue(result3.size() == 1)
+    assertTrue(result3[0].size() == 14)
+    assertTrue(result3[0][13] == 2, "new add column value is set to 2")
 
-    result = sql """ select count(*) from ${tableName} """
-    logger.info("result.size:" + result.size() + " result[0].size:" + result[0].size + " " + result[0][0])
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 1)
-    assertTrue(result[0][0] == 3, "total count is 3")
+    def result4 = sql """ select count(*) from ${tableName} """
+    logger.info("result4.size:"+result4.size() + " result4[0].size:" + result4[0].size + " " + result4[0][0])
+    assertTrue(result4.size() == 1)
+    assertTrue(result4[0].size() == 1)
+    assertTrue(result4[0][0] == 3, "total count is 3")
 
-    // drop column will throws exception 'Can not drop key column in Unique data model table'
-    // sql """
-    //       ALTER TABLE ${tableName} DROP COLUMN sex
-    //       """
-    // result = "null"
-    // while (!result.contains("FINISHED")){
-    //     result = sql "SHOW ALTER TABLE COLUMN WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
-    //     result = result.toString()
-    //     logger.info("result: ${result}")
-    //     if(result.contains("CANCELLED")) {
-    //         log.info("rollup job is cancelled, result: ${result}".toString())
-    //         break
-    //     }
-    //     Thread.sleep(1000)
-    // }
-    // result = sql """ select * from ${tableName} where user_id = 3 """
-    // assertTrue(result.size() == 1)
-    // assertTrue(result[0].size() == 11)
+    // drop column
+    sql """
+          ALTER TABLE ${tableName} DROP COLUMN last_visit_date
+          """
+    def result5 = sql """ select * from ${tableName} where user_id = 3 """
+    assertTrue(result5.size() == 1)
+    assertTrue(result5[0].size() == 13)
 
     sql """ INSERT INTO ${tableName} VALUES
-             (4, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (4, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(4), to_bitmap(4), 2)
         """
 
-    result = sql """ select * from ${tableName} where user_id = 4 """
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
+    def result6 = sql """ select * from ${tableName} where user_id = 4 """
+    assertTrue(result6.size() == 1)
+    assertTrue(result6[0].size() == 13)
 
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, hll_hash(5), to_bitmap(5), 2)
         """
 
     Thread.sleep(30 * 1000)
@@ -189,13 +188,13 @@ suite ("test_uniq_keys_schema_change") {
                 running = compactionStatus.run_status
             } while (running)
     }
-    result = sql """ select count(*) from ${tableName} """
-    assertTrue(result.size() == 1)
-    assertTrue(result[0][0] == 5)
+    def result7 = sql """ select count(*) from ${tableName} """
+    assertTrue(result7.size() == 1)
+    assertTrue(result7[0][0] == 5)
 
-    result = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
-    assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
+    def result8 = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
+    assertTrue(result8.size() == 1)
+    assertTrue(result8[0].size() == 13)
 
     int rowCount = 0
     for (String[] tablet in tablets) {
@@ -220,8 +219,9 @@ suite ("test_uniq_keys_schema_change") {
         }
     }
     logger.info("size:" + rowCount)
-    assertTrue(rowCount <= 10)
+    assertTrue(rowCount <= 8)
     } finally {
         //try_sql("DROP TABLE IF EXISTS ${tableName}")
     }
+
 }

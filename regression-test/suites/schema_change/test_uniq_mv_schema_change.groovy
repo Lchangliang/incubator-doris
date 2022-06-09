@@ -17,8 +17,8 @@
 
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
-suite ("test_uniq_keys_schema_change") {
-    def tableName = "schema_change_uniq_keys_regression_test"
+suite ("test_uniq_mv_schema_change") {
+    def tableName = "schema_change_uniq_mv_regression_test"
 
     try {
     sql """ DROP TABLE IF EXISTS ${tableName} """
@@ -40,6 +40,20 @@ suite ("test_uniq_keys_schema_change") {
             PROPERTIES ( "replication_num" = "1" );
         """
 
+    //add materialized view
+    def result = "null"
+    def mvName = "mv1"
+    sql "create materialized view ${mvName} as select user_id, date, city, age, sex from ${tableName} group by user_id, date, city, age, sex;"
+    while (!result.contains("FINISHED")){
+        result = sql "SHOW ALTER TABLE MATERIALIZED VIEW WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
+        result = result.toString()
+        logger.info("result: ${result}")
+        if(result.contains("CANCELLED")){
+            break
+        }
+        Thread.sleep(1000)
+    }
+
     sql """ INSERT INTO ${tableName} VALUES
              (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20)
         """
@@ -55,7 +69,7 @@ suite ("test_uniq_keys_schema_change") {
     sql """ INSERT INTO ${tableName} VALUES
              (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
         """
-    def result = sql """
+    result = sql """
                        select count(*) from ${tableName}
                     """
     assertTrue(result.size() == 1)
@@ -97,50 +111,40 @@ suite ("test_uniq_keys_schema_change") {
     assertTrue(result[0].size() == 1)
     assertTrue(result[0][0] == 3, "total count is 3")
 
-    // drop column will throws exception 'Can not drop key column in Unique data model table'
-    // sql """
-    //       ALTER TABLE ${tableName} DROP COLUMN sex
-    //       """
-    // result = "null"
-    // while (!result.contains("FINISHED")){
-    //     result = sql "SHOW ALTER TABLE COLUMN WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
-    //     result = result.toString()
-    //     logger.info("result: ${result}")
-    //     if(result.contains("CANCELLED")) {
-    //         log.info("rollup job is cancelled, result: ${result}".toString())
-    //         break
-    //     }
-    //     Thread.sleep(1000)
-    // }
-    // result = sql """ select * from ${tableName} where user_id = 3 """
-    // assertTrue(result.size() == 1)
-    // assertTrue(result[0].size() == 11)
+    // drop column
+    sql """
+          ALTER TABLE ${tableName} DROP COLUMN cost
+          """
+
+    result = sql """ select * from ${tableName} where user_id = 3 """
+    assertTrue(result.size() == 1)
+    assertTrue(result[0].size() == 11)
 
     sql """ INSERT INTO ${tableName} VALUES
-             (4, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (4, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
 
     result = sql """ select * from ${tableName} where user_id = 4 """
     assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
+    assertTrue(result[0].size() == 11)
 
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
     sql """ INSERT INTO ${tableName} VALUES
-             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+             (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 32, 20, 2)
         """
 
     Thread.sleep(30 * 1000)
@@ -195,7 +199,7 @@ suite ("test_uniq_keys_schema_change") {
 
     result = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
     assertTrue(result.size() == 1)
-    assertTrue(result[0].size() == 12)
+    assertTrue(result[0].size() == 11)
 
     int rowCount = 0
     for (String[] tablet in tablets) {
@@ -220,7 +224,7 @@ suite ("test_uniq_keys_schema_change") {
         }
     }
     logger.info("size:" + rowCount)
-    assertTrue(rowCount <= 10)
+    assertTrue(rowCount <= 14)
     } finally {
         //try_sql("DROP TABLE IF EXISTS ${tableName}")
     }
