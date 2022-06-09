@@ -17,8 +17,8 @@
 
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
-suite ("test_dup_keys_schema_change") {
-    def tableName = "schema_change_dup_keys_regression_test"
+suite ("test_dup_mv_schema_change") {
+    def tableName = "schema_change_dup_mv_regression_test"
 
     try {
         sql """ DROP TABLE IF EXISTS ${tableName} """
@@ -40,6 +40,20 @@ suite ("test_dup_keys_schema_change") {
                 PROPERTIES ( "replication_num" = "1" );
             """
 
+        //add materialized view
+        def result = "null"
+        def mvName = "mv1"
+        sql "create materialized view ${mvName} as select user_id, date, city, age,sex from ${tableName};"
+        while (!result.contains("FINISHED")){
+            result = sql "SHOW ALTER TABLE MATERIALIZED VIEW WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
+            result = result.toString()
+            logger.info("result: ${result}")
+            if(result.contains("CANCELLED")){
+                break
+            }
+            Thread.sleep(1000)
+        }
+
         sql """ INSERT INTO ${tableName} VALUES
                 (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20)
             """
@@ -55,7 +69,7 @@ suite ("test_dup_keys_schema_change") {
         sql """ INSERT INTO ${tableName} VALUES
                 (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
             """
-        def result = sql """
+        result = sql """
                         select count(*) from ${tableName}
                         """
         assertTrue(result.size() == 1)
@@ -111,6 +125,7 @@ suite ("test_dup_keys_schema_change") {
             }
             Thread.sleep(1000)
         }
+
         result = sql """ select * from ${tableName} where user_id = 3 """
         assertTrue(result.size() == 2)
         assertTrue(result[0].size() == 11)
@@ -221,7 +236,7 @@ suite ("test_dup_keys_schema_change") {
             }
         }
         logger.info("size:" + rowCount)
-        assertTrue(rowCount < 10)
+        assertTrue(rowCount <= 14)
     } finally {
         //try_sql("DROP TABLE IF EXISTS ${tableName}")
     }

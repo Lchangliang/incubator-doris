@@ -1,3 +1,4 @@
+      
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -17,12 +18,11 @@
 
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
-suite ("test_dup_keys_schema_change") {
-    def tableName = "schema_change_dup_keys_regression_test"
+suite ("test_agg_rollup_schema_change") {
+    def tableName = "schema_change_agg_rollup_regression_test"
 
     try {
         sql """ DROP TABLE IF EXISTS ${tableName} """
-
         sql """
                 CREATE TABLE ${tableName} (
                     `user_id` LARGEINT NOT NULL COMMENT "用户id",
@@ -30,76 +30,56 @@ suite ("test_dup_keys_schema_change") {
                     `city` VARCHAR(20) COMMENT "用户所在城市",
                     `age` SMALLINT COMMENT "用户年龄",
                     `sex` TINYINT COMMENT "用户性别",
-                    `last_visit_date` DATETIME DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
-                    `last_update_date` DATETIME DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次更新时间",
-                    `last_visit_date_not_null` DATETIME NOT NULL DEFAULT "1970-01-01 00:00:00" COMMENT "用户最后一次访问时间",
-                    `cost` BIGINT DEFAULT "0" COMMENT "用户总消费",
-                    `max_dwell_time` INT DEFAULT "0" COMMENT "用户最大停留时间",
-                    `min_dwell_time` INT DEFAULT "99999" COMMENT "用户最小停留时间")
-                DUPLICATE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
+
+                    `cost` BIGINT SUM DEFAULT "0" COMMENT "用户总消费",
+                    `max_dwell_time` INT MAX DEFAULT "0" COMMENT "用户最大停留时间",
+                    `min_dwell_time` INT MIN DEFAULT "99999" COMMENT "用户最小停留时间",
+                    `hll_col` HLL HLL_UNION NOT NULL COMMENT "HLL列",
+                    `bitmap_col` Bitmap BITMAP_UNION NOT NULL COMMENT "bitmap列")
+                AGGREGATE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
                 PROPERTIES ( "replication_num" = "1" );
             """
 
-        sql """ INSERT INTO ${tableName} VALUES
-                (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20)
-            """
+        //add rollup
+        def result = "null"
+        def rollupName = "rollup_cost"
+        sql "ALTER TABLE ${tableName} ADD ROLLUP ${rollupName}(`user_id`,`date`,`city`,`age`,`sex`, cost);"
+        while (!result.contains("FINISHED")){
+            result = sql "SHOW ALTER TABLE ROLLUP WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
+            result = result.toString()
+            logger.info("result: ${result}")
+            if(result.contains("CANCELLED")){
+                break
+            }
+            Thread.sleep(1000)
+        }
 
         sql """ INSERT INTO ${tableName} VALUES
-                (1, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 19)
+                (1, '2017-10-01', 'Beijing', 10, 1, 1, 30, 20, hll_hash(1), to_bitmap(1))
             """
-
         sql """ INSERT INTO ${tableName} VALUES
-                (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-02', '2020-01-02', '2020-01-02', 1, 31, 21)
+                (1, '2017-10-01', 'Beijing', 10, 1, 1, 31, 19, hll_hash(2), to_bitmap(2))
             """
-
         sql """ INSERT INTO ${tableName} VALUES
-                (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
+                (2, '2017-10-01', 'Beijing', 10, 1, 1, 31, 21, hll_hash(2), to_bitmap(2))
             """
-        def result = sql """
-                        select count(*) from ${tableName}
-                        """
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 1)
-        assertTrue(result[0][0] == 4, "total columns should be 4 rows")
-
-        // add column
-        sql """
-            ALTER table ${tableName} ADD COLUMN new_column INT default "1" 
-            """
-
-        sql """ SELECT * FROM ${tableName} WHERE user_id=2 """
-
-        sql """ INSERT INTO ${tableName} (`user_id`,`date`,`city`,`age`,`sex`,`last_visit_date`,`last_update_date`,
-                                        `last_visit_date_not_null`,`cost`,`max_dwell_time`,`min_dwell_time`)
-                VALUES
-                (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
-            """
-
-        result = sql """ SELECT * FROM ${tableName} WHERE user_id=3 """
-
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 12)
-        assertTrue(result[0][11] == 1, "new add column default value should be 1")
-
         sql """ INSERT INTO ${tableName} VALUES
-                (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (2, '2017-10-01', 'Beijing', 10, 1, 1, 32, 20, hll_hash(3), to_bitmap(3))
             """
-        result = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
 
+        result = "null";
+        result = sql """ select * from ${tableName} """
         assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 12)
-        assertTrue(result[1][11] == 2, "new add column value is set to 2")
+        assertTrue(result[0].size() == 10)
+        assertTrue(result[0][5] == 2, "user id 1 cost should be 2")
+        assertTrue(result[1][5] == 2, "user id 2 cost should be 2")
+        assertTrue(result[0].size() == 10)
 
-        result = sql """ select count(*) from ${tableName} """
-        logger.info("result.size:" + result.size() + " result[0].size:" + result[0].size + " " + result[0][0])
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 1)
-        assertTrue(result[0][0] == 6, "total count is 6")
-
-        // drop column
+        // drop value column with rollup, not light schema change
         sql """
-            ALTER TABLE ${tableName} DROP COLUMN sex
+            ALTER TABLE ${tableName} DROP COLUMN cost
             """
+
         result = "null"
         while (!result.contains("FINISHED")){
             result = sql "SHOW ALTER TABLE COLUMN WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
@@ -111,35 +91,39 @@ suite ("test_dup_keys_schema_change") {
             }
             Thread.sleep(1000)
         }
-        result = sql """ select * from ${tableName} where user_id = 3 """
-        assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 11)
 
-        sql """ INSERT INTO ${tableName} VALUES
-                (4, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+        sql """ INSERT INTO ${tableName} (`user_id`, `date`, `city`, `age`, `sex`, `max_dwell_time`,`min_dwell_time`, `hll_col`, `bitmap_col`)
+                VALUES
+                (3, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(4), to_bitmap(4))
             """
+        result = "null"
+        result = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
 
-        result = sql """ select * from ${tableName} where user_id = 4 """
         assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 11)
+        assertTrue(result[0].size() == 9)
 
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
+
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
+
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
+
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
+
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
+
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, 32, 20, hll_hash(5), to_bitmap(5))
             """
 
         Thread.sleep(30 * 1000)
@@ -188,15 +172,14 @@ suite ("test_dup_keys_schema_change") {
                     running = compactionStatus.run_status
                 } while (running)
         }
-
+         
         result = sql """ select count(*) from ${tableName} """
         assertTrue(result.size() == 1)
-        assertTrue(result[0][0] == 13)
-
+        assertTrue(result[0][0] == 4)
 
         result = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
-        assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 11)
+        assertTrue(result.size() == 1)
+        assertTrue(result[0].size() == 9)
 
         int rowCount = 0
         for (String[] tablet in tablets) {
@@ -221,9 +204,8 @@ suite ("test_dup_keys_schema_change") {
             }
         }
         logger.info("size:" + rowCount)
-        assertTrue(rowCount < 10)
+        assertTrue(rowCount <= 12)
     } finally {
-        //try_sql("DROP TABLE IF EXISTS ${tableName}")
+            //try_sql("DROP TABLE IF EXISTS ${tableName}")
     }
-
 }

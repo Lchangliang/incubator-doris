@@ -17,8 +17,8 @@
 
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
-suite ("test_dup_keys_schema_change") {
-    def tableName = "schema_change_dup_keys_regression_test"
+suite ("test_uniq_vals_schema_change") {
+    def tableName = "schema_change_uniq_vals_regression_test"
 
     try {
         sql """ DROP TABLE IF EXISTS ${tableName} """
@@ -36,7 +36,7 @@ suite ("test_dup_keys_schema_change") {
                     `cost` BIGINT DEFAULT "0" COMMENT "用户总消费",
                     `max_dwell_time` INT DEFAULT "0" COMMENT "用户最大停留时间",
                     `min_dwell_time` INT DEFAULT "99999" COMMENT "用户最小停留时间")
-                DUPLICATE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
+                UNIQUE KEY(`user_id`, `date`, `city`, `age`, `sex`) DISTRIBUTED BY HASH(`user_id`)
                 PROPERTIES ( "replication_num" = "1" );
             """
 
@@ -55,12 +55,13 @@ suite ("test_dup_keys_schema_change") {
         sql """ INSERT INTO ${tableName} VALUES
                 (2, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
             """
-        def result = sql """
+
+        def result1 = sql """
                         select count(*) from ${tableName}
                         """
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 1)
-        assertTrue(result[0][0] == 4, "total columns should be 4 rows")
+        assertTrue(result1.size() == 1)
+        assertTrue(result1[0].size() == 1)
+        assertTrue(result1[0][0] == 2, "total columns should be 2 rows")
 
         // add column
         sql """
@@ -75,71 +76,61 @@ suite ("test_dup_keys_schema_change") {
                 (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20)
             """
 
-        result = sql """ SELECT * FROM ${tableName} WHERE user_id=3 """
+        def result2 = sql """ SELECT * FROM ${tableName} WHERE user_id=3 """
 
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 12)
-        assertTrue(result[0][11] == 1, "new add column default value should be 1")
+        assertTrue(result2.size() == 1)
+        assertTrue(result2[0].size() == 12)
+        assertTrue(result2[0][11] == 1, "new add column default value should be 1")
+
 
         sql """ INSERT INTO ${tableName} VALUES
                 (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
-        result = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
+        def result3 = sql """ SELECT * FROM ${tableName} WHERE user_id = 3 """
 
-        assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 12)
-        assertTrue(result[1][11] == 2, "new add column value is set to 2")
+        assertTrue(result3.size() == 1)
+        assertTrue(result3[0].size() == 12)
+        assertTrue(result3[0][11] == 2, "new add column value is set to 2")
 
-        result = sql """ select count(*) from ${tableName} """
-        logger.info("result.size:" + result.size() + " result[0].size:" + result[0].size + " " + result[0][0])
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 1)
-        assertTrue(result[0][0] == 6, "total count is 6")
+        def result4 = sql """ select count(*) from ${tableName} """
+        logger.info("result4.size:"+result4.size() + " result4[0].size:" + result4[0].size + " " + result4[0][0])
+        assertTrue(result4.size() == 1)
+        assertTrue(result4[0].size() == 1)
+        assertTrue(result4[0][0] == 3, "total count is 3")
 
         // drop column
         sql """
-            ALTER TABLE ${tableName} DROP COLUMN sex
+            ALTER TABLE ${tableName} DROP COLUMN last_visit_date
             """
-        result = "null"
-        while (!result.contains("FINISHED")){
-            result = sql "SHOW ALTER TABLE COLUMN WHERE TableName='${tableName}' ORDER BY CreateTime DESC LIMIT 1;"
-            result = result.toString()
-            logger.info("result: ${result}")
-            if(result.contains("CANCELLED")) {
-                log.info("rollup job is cancelled, result: ${result}".toString())
-                break
-            }
-            Thread.sleep(1000)
-        }
-        result = sql """ select * from ${tableName} where user_id = 3 """
-        assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 11)
+        def result5 = sql """ select * from ${tableName} where user_id = 3 """
+        assertTrue(result5.size() == 1)
+        assertTrue(result5[0].size() == 11)
 
         sql """ INSERT INTO ${tableName} VALUES
-                (4, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (4, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
 
-        result = sql """ select * from ${tableName} where user_id = 4 """
-        assertTrue(result.size() == 1)
-        assertTrue(result[0].size() == 11)
+        def result6 = sql """ select * from ${tableName} where user_id = 4 """
+        assertTrue(result6.size() == 1)
+        assertTrue(result6[0].size() == 11)
 
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
         sql """ INSERT INTO ${tableName} VALUES
-                (5, '2017-10-01', 'Beijing', 10, '2020-01-03', '2020-01-03', '2020-01-03', 1, 32, 20, 2)
+                (5, '2017-10-01', 'Beijing', 10, 1, '2020-01-03', '2020-01-03', 1, 32, 20, 2)
             """
 
         Thread.sleep(30 * 1000)
@@ -188,15 +179,13 @@ suite ("test_dup_keys_schema_change") {
                     running = compactionStatus.run_status
                 } while (running)
         }
+        def result7 = sql """ select count(*) from ${tableName} """
+        assertTrue(result7.size() == 1)
+        assertTrue(result7[0][0] == 5)
 
-        result = sql """ select count(*) from ${tableName} """
-        assertTrue(result.size() == 1)
-        assertTrue(result[0][0] == 13)
-
-
-        result = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
-        assertTrue(result.size() == 2)
-        assertTrue(result[0].size() == 11)
+        def result8 = sql """  SELECT * FROM ${tableName} WHERE user_id=2 """
+        assertTrue(result8.size() == 1)
+        assertTrue(result8[0].size() == 11)
 
         int rowCount = 0
         for (String[] tablet in tablets) {
@@ -221,7 +210,7 @@ suite ("test_dup_keys_schema_change") {
             }
         }
         logger.info("size:" + rowCount)
-        assertTrue(rowCount < 10)
+        assertTrue(rowCount <= 10)
     } finally {
         //try_sql("DROP TABLE IF EXISTS ${tableName}")
     }

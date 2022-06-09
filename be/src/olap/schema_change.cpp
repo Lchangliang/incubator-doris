@@ -1768,7 +1768,7 @@ Status SchemaChangeHandler::_convert_historical_rowsets(const SchemaChangeParams
                 rs_reader->version(), VISIBLE,
                 rs_reader->rowset()->rowset_meta()->segments_overlap(),
                 &new_tablet->tablet_schema(), &rowset_writer);
-        if (!Status) {
+        if (!status) {
             res = Status::OLAPInternalError(OLAP_ERR_ROWSET_BUILDER_INIT);
             return process_alter_exit();
         }
