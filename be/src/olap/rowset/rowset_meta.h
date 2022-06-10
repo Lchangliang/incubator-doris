@@ -284,9 +284,7 @@ public:
         _schema = std::make_shared<TabletSchema>(*tablet_schema);
     }
 
-    const TabletSchema* tablet_schema() {
-        return _schema.get();
-    }
+    const TabletSchema* tablet_schema() { return _schema.get(); }
 
 private:
     friend class AlphaRowsetMeta;

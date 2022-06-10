@@ -47,8 +47,8 @@ Status ConvertRowset::do_convert() {
         RETURN_NOT_OK(alpah_rowsets[i]->create_reader(&input_rs_reader));
 
         std::unique_ptr<RowsetWriter> output_rs_writer;
-        RETURN_NOT_OK(_tablet->create_rowset_writer(output_version, VISIBLE, NONOVERLAPPING, &_tablet->tablet_schema(),
-                                                    &output_rs_writer));
+        RETURN_NOT_OK(_tablet->create_rowset_writer(output_version, VISIBLE, NONOVERLAPPING,
+                                                    &_tablet->tablet_schema(), &output_rs_writer));
         res = Merger::merge_rowsets(_tablet, ReaderType::READER_BASE_COMPACTION,
                                     &_tablet->tablet_schema(), {input_rs_reader},
                                     output_rs_writer.get(), &stats);

@@ -177,7 +177,7 @@ public:
     StorageMediumPB storage_medium() const { return _storage_medium; }
 
     static void init_column_from_tcolumn(uint32_t unique_id, const TColumn& tcolumn,
-                                          ColumnPB* column);
+                                         ColumnPB* column);
 
 private:
     Status _save_meta(DataDir* data_dir);

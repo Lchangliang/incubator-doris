@@ -29,7 +29,8 @@
 
 namespace doris {
 
-Status Merger::merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, const TabletSchema* cur_tablet_schema,
+Status Merger::merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type,
+                             const TabletSchema* cur_tablet_schema,
                              const std::vector<RowsetReaderSharedPtr>& src_rowset_readers,
                              RowsetWriter* dst_rowset_writer, Merger::Statistics* stats_output) {
     TRACE_COUNTER_SCOPE_LATENCY_US("merge_rowsets_latency_us");
@@ -89,7 +90,8 @@ Status Merger::merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, con
     return Status::OK();
 }
 
-Status Merger::vmerge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, const TabletSchema* cur_tablet_schema,
+Status Merger::vmerge_rowsets(TabletSharedPtr tablet, ReaderType reader_type,
+                              const TabletSchema* cur_tablet_schema,
                               const std::vector<RowsetReaderSharedPtr>& src_rowset_readers,
                               RowsetWriter* dst_rowset_writer, Statistics* stats_output) {
     TRACE_COUNTER_SCOPE_LATENCY_US("merge_rowsets_latency_us");

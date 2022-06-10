@@ -5047,7 +5047,7 @@ public class Catalog {
         List<Index> indexes = info.getIndexes();
 
         Database db = this.getDbOrMetaException(dbId);
-        OlapTable olapTable = db.getTableOrMetaException(tableId, TableType.OLAP);
+        OlapTable olapTable = (OlapTable) db.getTableOrMetaException(tableId, TableType.OLAP);
         olapTable.writeLock();
         try {
             modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, indexes, true);

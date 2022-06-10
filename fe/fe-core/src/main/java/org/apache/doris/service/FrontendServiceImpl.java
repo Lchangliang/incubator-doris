@@ -1244,7 +1244,7 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             }
 
             //rpc only olap table 
-            OlapTable olapTable = db.getTableOrMetaException(tableName.getTbl(), TableType.OLAP);
+            OlapTable olapTable = (OlapTable) db.getTableOrMetaException(tableName.getTbl(), TableType.OLAP);
             olapTable.writeLockOrMetaException();
 
             try {
