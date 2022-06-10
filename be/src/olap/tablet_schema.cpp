@@ -494,7 +494,8 @@ void TabletSchema::init_from_pb(const TabletSchemaPB& schema) {
     _compression_type = schema.compression_type();
 }
 
-void TabletSchema::build_current_tablet_schema(const POlapTableSchemaParam& ptable_schema_param,
+void TabletSchema::build_current_tablet_schema(int64_t index_id,
+                                               const POlapTableSchemaParam& ptable_schema_param,
                                                const TabletSchema& ori_tablet_schema) {
     // copy from ori_tablet_schema
     _keys_type = ori_tablet_schema.keys_type();
@@ -517,7 +518,27 @@ void TabletSchema::build_current_tablet_schema(const POlapTableSchemaParam& ptab
     bool has_bf_columns = false;
     _cols.clear();
     _field_name_to_index.clear();
+
+    std::unordered_set<int32_t> col_unqiue_id_set;
+    for (const POlapTableIndexSchema& index : ptable_schema_param.indexes()) {
+        if (index.id() == index_id) {
+            std::unordered_set<std::string> col_name_set;
+            std::for_each(index.columns().begin(), index.columns().end(),
+                          [&](std::string name) { col_name_set.insert(std::move(name)); });
+            for (size_t i = 0; i < ptable_schema_param.columns_size(); i++) {
+                if (col_name_set.find(ptable_schema_param.columns(i).name()) !=
+                    col_name_set.end()) {
+                    col_unqiue_id_set.insert(ptable_schema_param.columns(i).unique_id());
+                }
+            }
+            break;
+        }
+    }
+
     for (auto& pcolumn : ptable_schema_param.columns()) {
+        if (col_unqiue_id_set.find(pcolumn.unique_id()) == col_unqiue_id_set.end()) {
+            continue;
+        }
         TabletColumn column;
         column.init_from_pb(pcolumn);
         if (column.is_key()) {
@@ -530,6 +551,7 @@ void TabletSchema::build_current_tablet_schema(const POlapTableSchemaParam& ptab
             has_bf_columns = true;
         }
         _field_name_to_index[column.name()] = _num_columns;
+        _field_id_to_index[column.col_unique_id()] = _num_columns;
         _cols.emplace_back(std::move(column));
         _num_columns++;
     }
