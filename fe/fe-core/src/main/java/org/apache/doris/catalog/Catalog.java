@@ -71,6 +71,7 @@ import org.apache.doris.analysis.ReplacePartitionClause;
 import org.apache.doris.analysis.RestoreStmt;
 import org.apache.doris.analysis.RollupRenameClause;
 import org.apache.doris.analysis.ShowAlterStmt.AlterType;
+import org.apache.doris.analysis.TableName;
 import org.apache.doris.analysis.TableRenameClause;
 import org.apache.doris.analysis.TruncateTableStmt;
 import org.apache.doris.analysis.UninstallPluginStmt;
@@ -247,6 +248,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -5058,10 +5060,11 @@ public class Catalog {
         }
     }
     public TableName getTableNameByTableId(Long tableId) {
-        for (Database db : fullNameToDb.values()) {
-            Table table = db.getTableNullable(tableId);
-            if (table != null) {
-                return new TableName(db.getFullName(), table.getName());
+        for (String dbName : getInternalDataSource().getDbNames()) {
+            DatabaseIf db = getInternalDataSource().getDbNullable(dbName);
+            Optional<Table> table = db.getTable(tableId);
+            if (table.isPresent()) {
+                return new TableName(db.getFullName(), table.get().getName());
             }
         }
         return null;

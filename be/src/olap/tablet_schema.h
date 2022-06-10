@@ -168,7 +168,8 @@ public:
             const std::unordered_set<uint32_t>* tablet_columns_need_convert_null = nullptr) const;
     vectorized::Block create_block() const;
 
-    void build_current_tablet_schema(const POlapTableSchemaParam& ptable_schema_param,
+    void build_current_tablet_schema(int64_t index_id,
+                                     const POlapTableSchemaParam& ptable_schema_param,
                                      const TabletSchema& out_tablet_schema);
 
 private:
