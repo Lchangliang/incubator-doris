@@ -61,7 +61,7 @@ void SegmentLoader::_insert(const SegmentLoader::CacheKey& key, SegmentLoader::C
 Status SegmentLoader::load_segments(const BetaRowsetSharedPtr& rowset,
                                     SegmentCacheHandle* cache_handle,
                                     const TabletSchema* read_tablet_schema, bool use_cache) {
-    SegmentLoader::CacheKey cache_key(rowset->rowset_id());
+    SegmentLoader::CacheKey cache_key(rowset->rowset_id(), *read_tablet_schema);
     if (use_cache && _lookup(cache_key, cache_handle)) {
         cache_handle->owned = false;
         return Status::OK();

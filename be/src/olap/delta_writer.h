@@ -37,7 +37,6 @@ class SlotDescriptor;
 enum WriteType { LOAD = 1, LOAD_DELETE = 2, DELETE = 3 };
 
 struct WriteRequest {
-    int64_t index_id;
     int64_t tablet_id;
     int32_t schema_hash;
     WriteType write_type;
@@ -49,6 +48,7 @@ struct WriteRequest {
     const std::vector<SlotDescriptor*>* slots;
     bool is_high_priority = false;
     POlapTableSchemaParam ptable_schema_param;
+    int64_t index_id;
 };
 
 // Writer for a particular (load, index, tablet).
@@ -107,7 +107,8 @@ private:
 
     void _reset_mem_table();
 
-    void _build_current_tablet_schema(int64_t index_id, const POlapTableSchemaParam& table_schema_param,
+    void _build_current_tablet_schema(int64_t index_id,
+                                      const POlapTableSchemaParam& table_schema_param,
                                       const TabletSchema& ori_tablet_schema);
 
     bool _is_init = false;

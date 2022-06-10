@@ -35,11 +35,13 @@ public:
     // merge rows from `src_rowset_readers` and write into `dst_rowset_writer`.
     // return OLAP_SUCCESS and set statistics into `*stats_output`.
     // return others on error
-    static Status merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, const TabletSchema* cur_tablet_schema,
+    static Status merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type,
+                                const TabletSchema* cur_tablet_schema,
                                 const std::vector<RowsetReaderSharedPtr>& src_rowset_readers,
                                 RowsetWriter* dst_rowset_writer, Statistics* stats_output);
 
-    static Status vmerge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, const TabletSchema* cur_tablet_schema,
+    static Status vmerge_rowsets(TabletSharedPtr tablet, ReaderType reader_type,
+                                 const TabletSchema* cur_tablet_schema,
                                  const std::vector<RowsetReaderSharedPtr>& src_rowset_readers,
                                  RowsetWriter* dst_rowset_writer, Statistics* stats_output);
 };
