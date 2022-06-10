@@ -1569,8 +1569,8 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
     do {
         // there is no data in init rowset, so overlapping info is unknown.
         std::unique_ptr<RowsetWriter> rs_writer;
-        res = create_rowset_writer(version, VISIBLE, OVERLAP_UNKNOWN, &_tablet_meta->tablet_schema(),
-                                   &rs_writer);
+        res = create_rowset_writer(version, VISIBLE, OVERLAP_UNKNOWN,
+                                   &_tablet_meta->tablet_schema(), &rs_writer);
         if (!res.ok()) {
             LOG(WARNING) << "failed to init rowset writer for tablet " << full_name();
             break;

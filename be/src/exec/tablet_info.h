@@ -27,11 +27,11 @@
 #include "common/status.h"
 #include "gen_cpp/Descriptors_types.h"
 #include "gen_cpp/descriptors.pb.h"
+#include "olap/tablet_schema.h"
 #include "runtime/descriptors.h"
 #include "runtime/raw_value.h"
 #include "runtime/tuple.h"
 #include "vec/core/block.h"
-#include "olap/tablet_schema.h"
 
 namespace doris {
 
@@ -59,7 +59,7 @@ public:
     int64_t version() const { return _version; }
 
     TupleDescriptor* tuple_desc() const { return _tuple_desc; }
-    const std::vector<TabletColumn*>& columns() const {return _columns;}
+    const std::vector<TabletColumn*>& columns() const { return _columns; }
     const std::vector<OlapTableIndexSchema*>& indexes() const { return _indexes; }
 
     void to_protobuf(POlapTableSchemaParam* pschema) const;

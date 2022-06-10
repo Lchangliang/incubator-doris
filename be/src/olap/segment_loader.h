@@ -25,6 +25,7 @@
 #include "olap/lru_cache.h"
 #include "olap/olap_common.h" // for rowset id
 #include "olap/rowset/beta_rowset.h"
+#include "olap/tablet_schema.h"
 #include "util/time.h"
 
 namespace doris {
@@ -48,11 +49,17 @@ class SegmentLoader {
 public:
     // The cache key or segment lru cache
     struct CacheKey {
-        CacheKey(RowsetId rowset_id_) : rowset_id(rowset_id_) {}
+        CacheKey(RowsetId rowset_id_, const TabletSchema& tablet_schema)
+                : rowset_id(rowset_id_), tablet_schema(tablet_schema) {}
         RowsetId rowset_id;
+        TabletSchema tablet_schema;
 
         // Encode to a flat binary which can be used as LRUCache's key
-        std::string encode() const { return rowset_id.to_string(); }
+        std::string encode() const {
+            TabletSchemaPB tablet_schema_pb;
+            tablet_schema.to_schema_pb(&tablet_schema_pb);
+            return rowset_id.to_string() + tablet_schema_pb.SerializeAsString();
+        }
     };
 
     // The cache value of segment lru cache.

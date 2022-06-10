@@ -115,7 +115,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
             Assert.assertEquals(AlterJobV2.JobState.FINISHED, alterJobV2.getJobState());
 
             Database db = Catalog.getCurrentCatalog().getDbOrMetaException(alterJobV2.getDbId());
-            OlapTable tbl = db.getTableOrMetaException(alterJobV2.getTableId(), Table.TableType.OLAP);
+            OlapTable tbl = (OlapTable) db.getTableOrMetaException(alterJobV2.getTableId(), Table.TableType.OLAP);
             while (tbl.getState() != OlapTable.OlapTableState.NORMAL) {
                 Thread.sleep(1000);
             }
@@ -127,7 +127,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         LOG.info("dbName: {}", Catalog.getCurrentCatalog().getDbNames());
 
         Database db = Catalog.getCurrentCatalog().getDbOrMetaException("default_cluster:test");
-        OlapTable tbl = db.getTableOrMetaException("sc_agg", Table.TableType.OLAP);
+        OlapTable tbl = (OlapTable) db.getTableOrMetaException("sc_agg", Table.TableType.OLAP);
         tbl.readLock();
         try {
             Assertions.assertNotNull(tbl);
@@ -249,7 +249,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         LOG.info("dbName: {}", Catalog.getCurrentCatalog().getDbNames());
 
         Database db = Catalog.getCurrentCatalog().getDbOrMetaException("default_cluster:test");
-        OlapTable tbl = db.getTableOrMetaException("sc_uniq", Table.TableType.OLAP);
+        OlapTable tbl = (OlapTable) db.getTableOrMetaException("sc_uniq", Table.TableType.OLAP);
         tbl.readLock();
         try {
             Assertions.assertNotNull(tbl);
@@ -306,7 +306,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         LOG.info("dbName: {}", Catalog.getCurrentCatalog().getDbNames());
 
         Database db = Catalog.getCurrentCatalog().getDbOrMetaException("default_cluster:test");
-        OlapTable tbl = db.getTableOrMetaException("sc_dup", Table.TableType.OLAP);
+        OlapTable tbl = (OlapTable) db.getTableOrMetaException("sc_dup", Table.TableType.OLAP);
         tbl.readLock();
         try {
             Assertions.assertNotNull(tbl);

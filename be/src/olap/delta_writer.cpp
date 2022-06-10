@@ -359,13 +359,15 @@ int64_t DeltaWriter::partition_id() const {
     return _req.partition_id;
 }
 
-void DeltaWriter::_build_current_tablet_schema(int64_t index_id, const POlapTableSchemaParam& ptable_schema_param,
+void DeltaWriter::_build_current_tablet_schema(int64_t index_id,
+                                               const POlapTableSchemaParam& ptable_schema_param,
                                                const TabletSchema& ori_tablet_schema) {
     *_tablet_schema = ori_tablet_schema;
     //new tablet schame if new table
     if (ptable_schema_param.columns_size() != 0 &&
         ptable_schema_param.columns(0).unique_id() >= 0) {
-        _tablet_schema->build_current_tablet_schema(index_id, ptable_schema_param, ori_tablet_schema);
+        _tablet_schema->build_current_tablet_schema(index_id, ptable_schema_param,
+                                                    ori_tablet_schema);
     }
 }
 
