@@ -46,9 +46,9 @@ Status Merger::merge_rowsets(TabletSharedPtr tablet, ReaderType reader_type, con
 
     RowCursor row_cursor;
     RETURN_NOT_OK_LOG(
-            row_cursor.init(tablet->tablet_schema()),
+            row_cursor.init(*cur_tablet_schema),
             "failed to init row cursor when merging rowsets of tablet " + tablet->full_name());
-    row_cursor.allocate_memory_for_string_type(tablet->tablet_schema());
+    row_cursor.allocate_memory_for_string_type(*cur_tablet_schema);
 
     std::unique_ptr<MemPool> mem_pool(new MemPool("Merger:merge_rowsets"));
 
