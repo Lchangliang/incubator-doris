@@ -588,7 +588,7 @@ void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_schema_pb) const {
     tablet_schema_pb->set_compression_type(_compression_type);
 }
 
-uint32_t Tatablet_schema_pbbletSchema::mem_size() const {
+uint32_t TabletSchema::mem_size() const {
     auto size = sizeof(TabletSchema);
     for (auto& col : _cols) {
         size += col.mem_size();
