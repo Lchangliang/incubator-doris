@@ -79,14 +79,19 @@ suite ("test_compaction_schema_change") {
         
     Thread.sleep(60000)
 
-    sql """ alter table ${tableName} add column test_column int default '1'; """
+    sql """ alter table ${tableName} add column test_column1 int default '1'; """
     sql """ insert into ${tableName} values (-1, 1, 1, 1, 1, 1, '1', 1, 1, 1, 1, 1, 1, 1, 1, 1, '1', 100); """
-    qt_compaction """ select test_column from ${tableName} where lo_orderkey = -1; """
+    qt_compaction """ select test_column1 from ${tableName} where lo_orderkey = -1; """
     
     thread.join()
 
     // wait to auto compaction
     Thread.sleep(60000)
 
-    qt_compaction """ select test_column from ${tableName} where lo_orderkey = -1; """ 
+    qt_compaction """ select test_column1 from ${tableName} where lo_orderkey = -1; """ 
+
+    sql """ alter table ${tableName} add column test_column2 varchar(16) default '1' after lo_partkey; """
+    sql """ insert into ${tableName} values (-1, 1, 1, 1, '2', 1, 1, '1', 1, 1, 1, 1, 1, 1, 1, 1, 1, '1', 100); """
+
+    qt_compaction """ select test_column2 from ${tableName} where lo_orderkey = -1; """
 }
