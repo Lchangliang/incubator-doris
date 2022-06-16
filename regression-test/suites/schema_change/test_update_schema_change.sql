@@ -39,12 +39,12 @@ INSERT INTO schema_change_update_regression_test VALUES
 
 UPDATE schema_change_update_regression_test set new_column = 20 where new_column = 2;
 
-SELECT * FROM schema_change_update_regression_test;
+SELECT * FROM schema_change_update_regression_test order by user_id DESC, last_visit_date;
 
 ALTER TABLE schema_change_update_regression_test DROP COLUMN new_column;
 
-SELECT * FROM schema_change_update_regression_test;
+SELECT * FROM schema_change_update_regression_test order by user_id DESC, last_visit_date;
 
 UPDATE schema_change_update_regression_test set cost = 20 where user_id = 5;
 
-SELECT * FROM schema_change_update_regression_test;
+SELECT * FROM schema_change_update_regression_test order by user_id DESC, last_visit_date;
