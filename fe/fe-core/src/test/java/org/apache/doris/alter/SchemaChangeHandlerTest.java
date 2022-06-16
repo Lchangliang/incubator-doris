@@ -142,7 +142,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String addValColStmtStr = "alter table test.sc_agg add column new_v1 int MAX default '0'";
         AlterTableStmt addValColStmt = (AlterTableStmt) parseAndAnalyzeStmt(addValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(addValColStmt);
-
+        jobSize++;
         //check alter job, do not create job
         Map<Long, AlterJobV2> alterJobs = Catalog.getCurrentCatalog().getSchemaChangeHandler().getAlterJobsV2();
         Assertions.assertEquals(jobSize, alterJobs.size());
@@ -183,7 +183,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String dropValColStmtStr = "alter table test.sc_agg drop column new_v1";
         AlterTableStmt dropValColStmt = (AlterTableStmt) parseAndAnalyzeStmt(dropValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(dropValColStmt);
-
+        jobSize++;
         //check alter job, do not create job
         LOG.info("alterJobs:{}", alterJobs);
         Assertions.assertEquals(jobSize, alterJobs.size());
@@ -264,7 +264,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String addValColStmtStr = "alter table test.sc_uniq add column new_v1 int default '0'";
         AlterTableStmt addValColStmt = (AlterTableStmt) parseAndAnalyzeStmt(addValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(addValColStmt);
-
+        jobSize++;
         //check alter job, do not create job
         Map<Long, AlterJobV2> alterJobs = Catalog.getCurrentCatalog().getSchemaChangeHandler().getAlterJobsV2();
         LOG.info("alterJobs:{}", alterJobs);
@@ -285,7 +285,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String dropValColStmtStr = "alter table test.sc_uniq drop column new_v1";
         AlterTableStmt dropValColStm = (AlterTableStmt) parseAndAnalyzeStmt(dropValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(dropValColStm);
-
+        jobSize++;
         //check alter job
         Assertions.assertEquals(jobSize, alterJobs.size());
         tbl.readLock();
@@ -321,7 +321,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String addValColStmtStr = "alter table test.sc_dup add column new_v1 int default '0'";
         AlterTableStmt addValColStmt = (AlterTableStmt) parseAndAnalyzeStmt(addValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(addValColStmt);
-
+        jobSize++;
         //check alter job, do not create job
         Map<Long, AlterJobV2> alterJobs = Catalog.getCurrentCatalog().getSchemaChangeHandler().getAlterJobsV2();
         LOG.info("alterJobs:{}", alterJobs);
@@ -342,7 +342,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         String dropValColStmtStr = "alter table test.sc_dup drop column new_v1";
         AlterTableStmt dropValColStm = (AlterTableStmt) parseAndAnalyzeStmt(dropValColStmtStr);
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(dropValColStm);
-
+        jobSize++;
         //check alter job
         Assertions.assertEquals(jobSize, alterJobs.size());
         tbl.readLock();

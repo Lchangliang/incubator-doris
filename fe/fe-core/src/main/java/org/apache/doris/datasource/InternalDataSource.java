@@ -1743,6 +1743,12 @@ public class InternalDataSource implements DataSourceIf {
         OlapTable olapTable =
                 new OlapTable(tableId, tableName, baseSchema, keysType, partitionInfo, defaultDistributionInfo,
                         indexes);
+
+        for (Column column : baseSchema) {
+            column.setUniqueId(olapTable.incAndGetMaxColUniqueId());
+            LOG.debug("table: {}, newColumn: {}, uniqueId: {}", olapTable.getName(), column.getName(), column.getUniqueId());
+        }
+
         olapTable.setComment(stmt.getComment());
 
         // set base index id
