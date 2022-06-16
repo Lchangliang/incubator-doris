@@ -5021,20 +5021,26 @@ public class Catalog {
 
         //update base index schema
         long baseIndexId = olapTable.getBaseIndexId();
-        MaterializedIndexMeta baseIndexMeta = olapTable.getIndexMetaByIndexId(baseIndexId);
-        baseIndexMeta.setSchema(indexSchemaMap.get(baseIndexId));
-
         List<Long> indexIds = new ArrayList<Long>();
         indexIds.add(baseIndexId);
         indexIds.addAll(olapTable.getIndexIdListExceptBaseIndex());
-        //i = 1 to skip base index
-        for (int i = 1; i < indexIds.size(); i++) {
-            List<Column> rollupSchema = indexSchemaMap.get(indexIds.get(i));
+        for (int i = 0; i < indexIds.size(); i++) {
+            List<Column> indexSchema = indexSchemaMap.get(indexIds.get(i));
             MaterializedIndexMeta currentIndexMeta = olapTable.getIndexMetaByIndexId(indexIds.get(i));
-            currentIndexMeta.setSchema(rollupSchema);
+            currentIndexMeta.setSchema(indexSchema);
+
+            int currentSchemaVersion = currentIndexMeta.getSchemaVersion();
+            int newSchemaVersion = currentSchemaVersion + 1;
+            currentIndexMeta.setSchemaVersion(newSchemaVersion);
+            // generate schema hash for new index has to generate a new schema hash not equal to current schema hash
+            int currentSchemaHash = currentIndexMeta.getSchemaHash();
+            int newSchemaHash = Util.generateSchemaHash();
+            while (currentSchemaHash == newSchemaHash) {
+                newSchemaHash = Util.generateSchemaHash();
+            }
+            currentIndexMeta.setSchemaHash(newSchemaHash);
         }
         olapTable.setIndexes(indexes);
-
         olapTable.rebuildFullSchema();
 
         //update max column unique id
