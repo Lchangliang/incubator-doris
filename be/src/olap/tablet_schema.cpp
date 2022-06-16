@@ -499,6 +499,7 @@ void TabletSchema::init_from_pb(const TabletSchemaPB& schema) {
     _sort_type = schema.sort_type();
     _sort_col_num = schema.sort_col_num();
     _compression_type = schema.compression_type();
+    _schema_version = schema.schema_version();
 }
 
 void TabletSchema::build_current_tablet_schema(int64_t index_id,
@@ -569,30 +570,32 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id,
         _has_bf_fpp = false;
         _bf_fpp = BLOOM_FILTER_DEFAULT_FPP;
     }
+    _schema_version = ptable_schema_param.version();
 }
 
-void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_meta_pb) const {
-    tablet_meta_pb->set_keys_type(_keys_type);
+void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_schema_pb) const {
+    tablet_schema_pb->set_keys_type(_keys_type);
     for (auto& col : _cols) {
-        ColumnPB* column = tablet_meta_pb->add_column();
+        ColumnPB* column = tablet_schema_pb->add_column();
         col.to_schema_pb(column);
     }
-    tablet_meta_pb->set_num_short_key_columns(_num_short_key_columns);
-    tablet_meta_pb->set_num_rows_per_row_block(_num_rows_per_row_block);
-    tablet_meta_pb->set_compress_kind(_compress_kind);
+    tablet_schema_pb->set_num_short_key_columns(_num_short_key_columns);
+    tablet_schema_pb->set_num_rows_per_row_block(_num_rows_per_row_block);
+    tablet_schema_pb->set_compress_kind(_compress_kind);
     if (_has_bf_fpp) {
-        tablet_meta_pb->set_bf_fpp(_bf_fpp);
+        tablet_schema_pb->set_bf_fpp(_bf_fpp);
     }
-    tablet_meta_pb->set_next_column_unique_id(_next_column_unique_id);
-    tablet_meta_pb->set_is_in_memory(_is_in_memory);
-    tablet_meta_pb->set_delete_sign_idx(_delete_sign_idx);
-    tablet_meta_pb->set_sequence_col_idx(_sequence_col_idx);
-    tablet_meta_pb->set_sort_type(_sort_type);
-    tablet_meta_pb->set_sort_col_num(_sort_col_num);
-    tablet_meta_pb->set_compression_type(_compression_type);
+    tablet_schema_pb->set_next_column_unique_id(_next_column_unique_id);
+    tablet_schema_pb->set_is_in_memory(_is_in_memory);
+    tablet_schema_pb->set_delete_sign_idx(_delete_sign_idx);
+    tablet_schema_pb->set_sequence_col_idx(_sequence_col_idx);
+    tablet_schema_pb->set_sort_type(_sort_type);
+    tablet_schema_pb->set_sort_col_num(_sort_col_num);
+    tablet_schema_pb->set_schema_version(_schema_version);
+    tablet_schema_pb->set_compression_type(_compression_type);
 }
 
-uint32_t TabletSchema::mem_size() const {
+uint32_t Tatablet_schema_pbbletSchema::mem_size() const {
     auto size = sizeof(TabletSchema);
     for (auto& col : _cols) {
         size += col.mem_size();

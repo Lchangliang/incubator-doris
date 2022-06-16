@@ -140,8 +140,13 @@ Status Compaction::do_compaction_impl(int64_t permits) {
               << ", output_version=" << _output_version << ", permits: " << permits;
 
     // get cur schema if rowset schema exist, rowset schema must be newer than tablet schema
-    auto max_version_rowset = _input_rowsets.back();
-    const TabletSchema* cur_tablet_schema = max_version_rowset->rowset_meta()->tablet_schema();
+    auto max_version_rowset =
+            std::max_element(_input_rowsets.begin(), _input_rowsets.end(),
+                             [](const RowsetSharedPtr& a, const RowsetSharedPtr& b) {
+                                 return a->rowset_meta()->tablet_schema()->schema_version() <
+                                        b->rowset_meta()->tablet_schema()->schema_version();
+                             });
+    const TabletSchema* cur_tablet_schema = (*max_version_rowset)->rowset_meta()->tablet_schema();
     if (cur_tablet_schema == nullptr) {
         cur_tablet_schema = &(_tablet->tablet_schema());
     }

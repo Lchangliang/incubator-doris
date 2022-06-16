@@ -162,6 +162,7 @@ public:
     int32_t sequence_col_idx() const { return _sequence_col_idx; }
     segment_v2::CompressionTypePB compression_type() const { return _compression_type; }
 
+    int32_t schema_version() const { return _schema_version; }
     void clear_columns();
     vectorized::Block create_block(
             const std::vector<uint32_t>& return_columns,
@@ -200,6 +201,7 @@ private:
     bool _is_in_memory = false;
     int32_t _delete_sign_idx = -1;
     int32_t _sequence_col_idx = -1;
+    int32_t _schema_version = -1;
 };
 
 bool operator==(const TabletSchema& a, const TabletSchema& b);
