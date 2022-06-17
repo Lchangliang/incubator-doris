@@ -22,6 +22,7 @@ import org.apache.doris.alter.AlterJobV2;
 import org.apache.doris.alter.AlterJobV2.JobType;
 import org.apache.doris.alter.MaterializedViewHandler;
 import org.apache.doris.alter.SchemaChangeHandler;
+import org.apache.doris.alter.SchemaChangeJobV2;
 import org.apache.doris.alter.SystemHandler;
 import org.apache.doris.analysis.AddPartitionClause;
 import org.apache.doris.analysis.AdminCheckTabletsStmt;
@@ -5042,6 +5043,14 @@ public class Catalog {
             LOG.debug("logModifyTableAddOrDropColumns info:{}", info);
             editLog.logModifyTableAddOrDropColumns(info);
         }
+
+        //for compatibility, we need create a finished state schema change job v2
+        long jobId = this.getNextId();
+        SchemaChangeJobV2 schemaChangeJob = new SchemaChangeJobV2(jobId, db.getId(), olapTable.getId(), olapTable.getName(), 1000);
+        schemaChangeJob.setJobState(AlterJobV2.JobState.FINISHED);
+        schemaChangeJob.setFinishedTimeMs(System.currentTimeMillis());
+        this.getSchemaChangeHandler().addAlterJobV2(schemaChangeJob);
+
         LOG.info("finished modify table's add or drop columns. table: {}, is replay: {}",
                 olapTable.getName(), isReplay);
     }

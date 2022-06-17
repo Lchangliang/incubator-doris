@@ -93,7 +93,7 @@ public class AlterJobV2Test {
         Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(alterTableStmt);
         // 2. check alter job
         Map<Long, AlterJobV2> alterJobs = Catalog.getCurrentCatalog().getSchemaChangeHandler().getAlterJobsV2();
-        Assert.assertEquals(0, alterJobs.size());
+        Assert.assertEquals(1, alterJobs.size());
         waitAlterJobDone(alterJobs);
         // 3. check show alter table column
         String showAlterStmtStr = "show alter table column from test;";
