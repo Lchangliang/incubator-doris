@@ -174,6 +174,7 @@ struct TOlapTableIndexSchema {
     1: required i64 id
     2: required list<string> columns
     3: required i32 schema_hash
+    4: required list<TColumn> columns_desc
 }
 
 struct TOlapTableSchemaParam {
@@ -185,7 +186,6 @@ struct TOlapTableSchemaParam {
     4: required list<TSlotDescriptor> slot_descs
     5: required TTupleDescriptor tuple_desc
     6: required list<TOlapTableIndexSchema> indexes
-    7: optional list<TColumn> columns
 }
 
 struct TOlapTableIndex {

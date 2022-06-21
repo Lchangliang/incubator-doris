@@ -48,6 +48,7 @@ message POlapTableIndexSchema {
     required int64 id = 1;
     repeated string columns = 2;
     required int32 schema_hash = 3;
+    repeated ColumnPB columns_desc = 4;
 };
 
 message POlapTableSchemaParam {
@@ -59,6 +60,5 @@ message POlapTableSchemaParam {
     repeated PSlotDescriptor slot_descs = 4;
     required PTupleDescriptor tuple_desc = 5;
     repeated POlapTableIndexSchema indexes = 6;
-    repeated ColumnPB columns = 7;
 };
 

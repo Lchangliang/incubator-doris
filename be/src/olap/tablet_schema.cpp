@@ -371,6 +371,7 @@ void TabletColumn::init_from_pb(const ColumnPB& column) {
 void TabletColumn::to_schema_pb(ColumnPB* column) const {
     column->set_unique_id(_unique_id);
     column->set_name(_col_name);
+    column->set_col_unique_id(_col_unique_id);
     column->set_type(get_string_by_field_type(_type));
     column->set_is_key(_is_key);
     column->set_is_nullable(_is_nullable);
@@ -520,41 +521,27 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id,
     _cols.clear();
     _field_name_to_index.clear();
 
-    std::unordered_set<int32_t> col_unqiue_id_set;
     for (const POlapTableIndexSchema& index : ptable_schema_param.indexes()) {
         if (index.id() == index_id) {
-            std::unordered_set<std::string> col_name_set;
-            std::for_each(index.columns().begin(), index.columns().end(),
-                          [&](std::string name) { col_name_set.insert(std::move(name)); });
-            for (size_t i = 0; i < ptable_schema_param.columns_size(); i++) {
-                if (col_name_set.find(ptable_schema_param.columns(i).name()) !=
-                    col_name_set.end()) {
-                    col_unqiue_id_set.insert(ptable_schema_param.columns(i).unique_id());
+            for (auto& pcolumn : index.columns_desc()) {
+                TabletColumn column;
+                column.init_from_pb(pcolumn);
+                if (column.is_key()) {
+                    _num_key_columns++;
                 }
+                if (column.is_nullable()) {
+                    _num_null_columns++;
+                }
+                if (column.is_bf_column()) {
+                    has_bf_columns = true;
+                }
+                _field_name_to_index[column.name()] = _num_columns;
+                _field_id_to_index[column.col_unique_id()] = _num_columns;
+                _cols.emplace_back(std::move(column));
+                _num_columns++;
             }
             break;
         }
-    }
-
-    for (auto& pcolumn : ptable_schema_param.columns()) {
-        if (col_unqiue_id_set.find(pcolumn.unique_id()) == col_unqiue_id_set.end()) {
-            continue;
-        }
-        TabletColumn column;
-        column.init_from_pb(pcolumn);
-        if (column.is_key()) {
-            _num_key_columns++;
-        }
-        if (column.is_nullable()) {
-            _num_null_columns++;
-        }
-        if (column.is_bf_column()) {
-            has_bf_columns = true;
-        }
-        _field_name_to_index[column.name()] = _num_columns;
-        _field_id_to_index[column.col_unique_id()] = _num_columns;
-        _cols.emplace_back(std::move(column));
-        _num_columns++;
     }
     if (has_bf_columns) {
         _has_bf_fpp = true;

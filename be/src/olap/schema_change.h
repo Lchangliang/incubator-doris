@@ -253,6 +253,7 @@ private:
         AlterTabletType alter_tablet_type;
         TabletSharedPtr base_tablet;
         TabletSharedPtr new_tablet;
+        TabletSchema* base_tablet_schema = nullptr;
         std::vector<RowsetReaderSharedPtr> ref_rowset_readers;
         DeleteHandler* delete_handler = nullptr;
         std::unordered_map<std::string, AlterMaterializedViewParam> materialized_params_map;
@@ -271,7 +272,7 @@ private:
                                  RowBlockChanger* rb_changer, bool* sc_sorting, bool* sc_directly,
                                  const std::unordered_map<std::string, AlterMaterializedViewParam>&
                                          materialized_function_map,
-                                 DescriptorTbl desc_tbl);
+                                 DescriptorTbl desc_tbl, const TabletSchema* base_tablet_schema);
 
     // Initialization Settings for creating a default value
     static Status _init_column_mapping(ColumnMapping* column_mapping,

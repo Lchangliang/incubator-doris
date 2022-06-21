@@ -31,6 +31,9 @@ void OlapTableIndexSchema::to_protobuf(POlapTableIndexSchema* pindex) const {
     for (auto slot : slots) {
         pindex->add_columns(slot->col_name());
     }
+    for (auto column : columns) {
+        column->to_schema_pb(pindex->add_columns_desc());
+    }
 }
 
 Status OlapTableSchemaParam::init(const POlapTableSchemaParam& pschema) {
@@ -59,12 +62,12 @@ Status OlapTableSchemaParam::init(const POlapTableSchemaParam& pschema) {
             }
             index->slots.emplace_back(it->second);
         }
+        for (auto& pcolumn_desc : p_index.columns_desc()) {
+            TabletColumn* tc = _obj_pool.add(new TabletColumn());
+            tc->init_from_pb(pcolumn_desc);
+            index->columns.emplace_back(tc);
+        }
         _indexes.emplace_back(index);
-    }
-    for (auto& pcolumn : pschema.columns()) {
-        TabletColumn* tc = _obj_pool.add(new TabletColumn());
-        tc->init_from_pb(pcolumn);
-        _columns.emplace_back(tc);
     }
 
     std::sort(_indexes.begin(), _indexes.end(),
@@ -99,12 +102,12 @@ Status OlapTableSchemaParam::init(const TOlapTableSchemaParam& tschema) {
             }
             index->slots.emplace_back(it->second);
         }
+        for (auto& tcolumn_desc : t_index.columns_desc) {
+            TabletColumn* tc = _obj_pool.add(new TabletColumn());
+            tc->init_from_thrift(tcolumn_desc);
+            index->columns.emplace_back(tc);
+        }
         _indexes.emplace_back(index);
-    }
-    for (auto& tcolumn : tschema.columns) {
-        TabletColumn* tc = _obj_pool.add(new TabletColumn());
-        tc->init_from_thrift(tcolumn);
-        _columns.emplace_back(tc);
     }
 
     std::sort(_indexes.begin(), _indexes.end(),
@@ -125,18 +128,11 @@ void OlapTableSchemaParam::to_protobuf(POlapTableSchemaParam* pschema) const {
     for (auto index : _indexes) {
         index->to_protobuf(pschema->add_indexes());
     }
-    for (auto column : _columns) {
-        column->to_schema_pb(pschema->add_columns());
-    }
 }
 
 std::string OlapTableSchemaParam::debug_string() const {
     std::stringstream ss;
     ss << "tuple_desc=" << _tuple_desc->debug_string();
-    ss << "columns: ";
-    for (auto column : _columns) {
-        ss << column->unique_id() << ":" << column->name() << " ";
-    }
     return ss.str();
 }
 
