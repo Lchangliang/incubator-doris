@@ -520,6 +520,7 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id,
     bool has_bf_columns = false;
     _cols.clear();
     _field_name_to_index.clear();
+    _field_id_to_index.clear();
 
     for (const POlapTableIndexSchema& index : ptable_schema_param.indexes()) {
         if (index.id() == index_id) {
