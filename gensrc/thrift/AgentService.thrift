@@ -139,6 +139,7 @@ struct TAlterTabletReqV2 {
     7: optional list<TAlterMaterializedViewParam> materialized_view_params
     8: optional TAlterTabletType alter_tablet_type = TAlterTabletType.SCHEMA_CHANGE
     9: optional Descriptors.TDescriptorTable desc_tbl
+    10: optional list<Descriptors.TColumn> columns
 }
 
 struct TAlterMaterializedViewParam {

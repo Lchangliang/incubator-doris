@@ -372,8 +372,8 @@ void DeltaWriter::_build_current_tablet_schema(int64_t index_id,
                                                const TabletSchema& ori_tablet_schema) {
     *_tablet_schema = ori_tablet_schema;
     //new tablet schame if new table
-    if (ptable_schema_param.columns_size() != 0 &&
-        ptable_schema_param.columns(0).unique_id() >= 0) {
+    if (ptable_schema_param.indexes(0).columns_desc_size() != 0 &&
+        ptable_schema_param.indexes(0).columns_desc(0).unique_id() >= 0) {
         _tablet_schema->build_current_tablet_schema(index_id, ptable_schema_param,
                                                     ori_tablet_schema);
     }

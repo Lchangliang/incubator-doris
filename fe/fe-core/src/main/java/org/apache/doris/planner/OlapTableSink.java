@@ -188,16 +188,12 @@ public class OlapTableSink extends DataSink {
         for (Map.Entry<Long, MaterializedIndexMeta> pair : table.getIndexIdToMeta().entrySet()) {
             MaterializedIndexMeta indexMeta = pair.getValue();
             List<String> columns = Lists.newArrayList();
+            List<TColumn> columns_desc = Lists.newArrayList();
             columns.addAll(indexMeta.getSchema().stream().map(Column::getName).collect(Collectors.toList()));
+            columns_desc.addAll(indexMeta.getSchema().stream().map(Column::toThrift).collect(Collectors.toList()));
             TOlapTableIndexSchema indexSchema = new TOlapTableIndexSchema(pair.getKey(), columns,
-                    indexMeta.getSchemaHash());
+                    indexMeta.getSchemaHash(), columns_desc);
             schemaParam.addToIndexes(indexSchema);
-        }
-        // add columns
-        for (Column col : table.getFullSchema()) {
-            TColumn tColumn = col.toThrift();
-            col.setIndexFlag(tColumn, table.getIndexes());
-            schemaParam.addToColumns(tColumn);
         }
         return schemaParam;
     }
