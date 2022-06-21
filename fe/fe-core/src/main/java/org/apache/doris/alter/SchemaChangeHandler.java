@@ -1578,6 +1578,8 @@ public class SchemaChangeHandler extends AlterHandler {
             throws UserException {
         olapTable.writeLockOrDdlException();
         try {
+            //alterClauses can or cannot light schema change
+            boolean ligthSchemaChange = true;
             // index id -> index schema
             Map<Long, List<Column>> indexSchemaMap = new HashMap<>();
             for (Map.Entry<Long, List<Column>> entry : olapTable.getIndexIdToSchema(true).entrySet()) {
@@ -1654,55 +1656,59 @@ public class SchemaChangeHandler extends AlterHandler {
 
                 if (alterClause instanceof AddColumnClause) {
                     // add column
-                    boolean ligthSchemaChange = processAddColumn((AddColumnClause) alterClause, olapTable, indexSchemaMap);
-                    LOG.debug("processAddColumn, table: {}({}), getMaxColUniqueId(): {}, ligthSchemaChange: {}", olapTable.getName(), olapTable.getId(), 
-                        olapTable.getMaxColUniqueId(), ligthSchemaChange);
-                    if (ligthSchemaChange) {
-                        //for schema change add column optimize, direct modify table meta.
-                        Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
-                        return;
+                    boolean clauseCanLigthSchemaChange = processAddColumn((AddColumnClause) alterClause, olapTable, indexSchemaMap);
+                    if (clauseCanLigthSchemaChange == false) {
+                        ligthSchemaChange = false;
                     }
                 } else if (alterClause instanceof AddColumnsClause) {
                     // add columns
-                    boolean ligthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap, false);
-                    LOG.debug("processAddColumns, table: {}({}), getMaxColUniqueId(): {}, ligthSchemaChange: {}", olapTable.getName(), olapTable.getId(),
-                        olapTable.getMaxColUniqueId(), ligthSchemaChange);
-                    if (ligthSchemaChange) {
-                        //for schema change add column optimize, direct modify table meta.
-                        Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
-                        return;
+                    boolean clauseCanLigthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap, false);
+                    if (clauseCanLigthSchemaChange == false) {
+                        ligthSchemaChange = false;
                     }
                 } else if (alterClause instanceof DropColumnClause) {
                     // drop column and drop indexes on this column
-                    boolean ligthSchemaChange = processDropColumn((DropColumnClause) alterClause, olapTable, indexSchemaMap, newIndexes);
-                    LOG.debug("processDropColumn, table: {}({}), getMaxColUniqueId(): {}", olapTable.getName(), olapTable.getId(), olapTable.getMaxColUniqueId());
-                    if (ligthSchemaChange) {
-                        //for schema change add column optimize, direct modify table meta.
-                        Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
-                        return;
+                    boolean clauseCanLigthSchemaChange = processDropColumn((DropColumnClause) alterClause, olapTable, indexSchemaMap, newIndexes);
+                    if (clauseCanLigthSchemaChange == false) {
+                        ligthSchemaChange = false;
                     }
                 } else if (alterClause instanceof ModifyColumnClause) {
                     // modify column
                     processModifyColumn((ModifyColumnClause) alterClause, olapTable, indexSchemaMap);
+                    ligthSchemaChange = false;
                 } else if (alterClause instanceof ReorderColumnsClause) {
                     // reorder column
                     processReorderColumn((ReorderColumnsClause) alterClause, olapTable, indexSchemaMap);
+                    ligthSchemaChange = false;
                 } else if (alterClause instanceof ModifyTablePropertiesClause) {
                     // modify table properties
                     // do nothing, properties are already in propertyMap
+                    ligthSchemaChange = false;
                 } else if (alterClause instanceof CreateIndexClause) {
                     if (processAddIndex((CreateIndexClause) alterClause, olapTable, newIndexes)) {
                         return;
                     }
+                    ligthSchemaChange = false;
                 } else if (alterClause instanceof DropIndexClause) {
                     if (processDropIndex((DropIndexClause) alterClause, olapTable, newIndexes)) {
                         return;
                     }
+                    ligthSchemaChange = false;
                 } else {
                     Preconditions.checkState(false);
                 }
-            } // end for alter clausesnnnnnn
-            createJob(db.getId(), olapTable, indexSchemaMap, propertyMap, newIndexes);
+            } // end for alter clauses
+
+            LOG.debug("processAddColumns, table: {}({}), getMaxColUniqueId(): {}, ligthSchemaChange: {}", olapTable.getName(),
+                        olapTable.getId(), olapTable.getMaxColUniqueId(), ligthSchemaChange);
+
+            if (ligthSchemaChange) {
+                //for schema change add/drop value column optimize, direct modify table meta.
+                Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
+                return;
+            } else {
+                createJob(db.getId(), olapTable, indexSchemaMap, propertyMap, newIndexes);
+            }
         } finally {
             olapTable.writeUnlock();
         }
