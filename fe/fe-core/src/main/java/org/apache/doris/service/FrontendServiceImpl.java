@@ -1279,7 +1279,8 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                     indexSchemaMap.put(entry.getKey(), new ArrayList<>(entry.getValue()));
                 }
                 //4. call schame change function, only for dynamic table feature.
-                SchemaChangeHandler schemaChangeHandler = new SchemaChangeHandler(); 
+                SchemaChangeHandler schemaChangeHandler = new SchemaChangeHandler();
+                schemaChangeHandler.setMaxColUniqueId(olapTable.getMaxColUniqueId());
                 boolean ligthSchemaChange = schemaChangeHandler.processAddColumns(addColumnsClause, olapTable, indexSchemaMap, true);
                 if (ligthSchemaChange) {
                     //for schema change add column optimize, direct modify table meta.

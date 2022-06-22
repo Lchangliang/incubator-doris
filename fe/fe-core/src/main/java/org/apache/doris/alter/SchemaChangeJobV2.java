@@ -625,7 +625,7 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
                 maxColUniqueId = column.getUniqueId();
             }
         }
-        tbl.setMaxtColUniqueId(maxColUniqueId);
+        tbl.setMaxColUniqueId(maxColUniqueId);
         LOG.debug("fullSchema:{}, maxColUniqueId:{}", tbl.getFullSchema(), maxColUniqueId);
 
         tbl.setState(OlapTableState.NORMAL);
