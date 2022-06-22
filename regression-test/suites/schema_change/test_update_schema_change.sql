@@ -29,7 +29,7 @@ SELECT * FROM schema_change_update_regression_test order by user_id DESC, last_v
 
 UPDATE schema_change_update_regression_test set new_column = 2 where user_id = 1;
 
-SELECT * FROM schema_change_update_regression_test;
+SELECT * FROM schema_change_update_regression_test order by user_id ASC, last_visit_date;
 
 INSERT INTO schema_change_update_regression_test VALUES
              (3, '2017-10-01', 'Beijing', 10, 1, '2020-01-01', '2020-01-01', '2020-01-01', 1, 30, 20, 2);

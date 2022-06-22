@@ -5051,7 +5051,7 @@ public class Catalog {
                 maxColUniqueId = column.getUniqueId();
             }
         }
-        olapTable.setMaxtColUniqueId(maxColUniqueId);
+        olapTable.setMaxColUniqueId(maxColUniqueId);
 
         if (!isReplay) {
             TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(db.getId(), olapTable.getId(), indexSchemaMap, indexes);

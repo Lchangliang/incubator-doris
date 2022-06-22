@@ -204,7 +204,7 @@ public class OlapTable extends Table {
         return this.maxColUniqueId;
     }
 
-    public void setMaxtColUniqueId(int maxColUniqueId) {
+    public void setMaxColUniqueId(int maxColUniqueId) {
         this.maxColUniqueId = maxColUniqueId;
     }
 

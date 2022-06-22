@@ -121,6 +121,8 @@ public class SchemaChangeHandler extends AlterHandler {
 
     public int cycleCount = 0;
 
+    public int maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
+
     public SchemaChangeHandler() {
         super("schema change", Config.default_schema_change_scheduler_interval_millisecond);
     }
@@ -145,7 +147,8 @@ public class SchemaChangeHandler extends AlterHandler {
 
         //only new table generate ColUniqueId, exist table do not.
         if (olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE) {
-            column.setUniqueId(olapTable.getMaxColUniqueId() + 1);
+            maxColUniqueId++;
+            column.setUniqueId(maxColUniqueId);
         }
 
         return addColumnInternal(olapTable, column, columnPos, targetIndexId, baseIndexId,
@@ -205,10 +208,9 @@ public class SchemaChangeHandler extends AlterHandler {
 
         //for new table calculate column unique id
         if (olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE) {
-            int maxColUniqueId = olapTable.getMaxColUniqueId();
             for (Column column : columns) {
-                column.setUniqueId(maxColUniqueId + 1);
                 maxColUniqueId++;
+                column.setUniqueId(maxColUniqueId);
             }
         }
 
@@ -1573,6 +1575,10 @@ public class SchemaChangeHandler extends AlterHandler {
         getAlterJobV2Infos(db, ImmutableList.copyOf(alterJobsV2.values()), schemaChangeJobInfos);
     }
 
+    public void setMaxColUniqueId(int maxColUniqueId) {
+        this.maxColUniqueId = maxColUniqueId;
+    }
+
     @Override
     public void process(List<AlterClause> alterClauses, String clusterName, Database db, OlapTable olapTable)
             throws UserException {
@@ -1580,6 +1586,8 @@ public class SchemaChangeHandler extends AlterHandler {
         try {
             //alterClauses can or cannot light schema change
             boolean ligthSchemaChange = true;
+            //for multi add colmuns clauses
+            this.setMaxColUniqueId(olapTable.getMaxColUniqueId());
             // index id -> index schema
             Map<Long, List<Column>> indexSchemaMap = new HashMap<>();
             for (Map.Entry<Long, List<Column>> entry : olapTable.getIndexIdToSchema(true).entrySet()) {
@@ -1699,8 +1707,8 @@ public class SchemaChangeHandler extends AlterHandler {
                 }
             } // end for alter clauses
 
-            LOG.debug("processAddColumns, table: {}({}), getMaxColUniqueId(): {}, ligthSchemaChange: {}", olapTable.getName(),
-                        olapTable.getId(), olapTable.getMaxColUniqueId(), ligthSchemaChange);
+            LOG.debug("processAddColumns, table: {}({}), maxColUniqueId: {}, ligthSchemaChange: {}", olapTable.getName(),
+                        olapTable.getId(), maxColUniqueId, ligthSchemaChange);
 
             if (ligthSchemaChange) {
                 //for schema change add/drop value column optimize, direct modify table meta.
@@ -1710,6 +1718,8 @@ public class SchemaChangeHandler extends AlterHandler {
                 createJob(db.getId(), olapTable, indexSchemaMap, propertyMap, newIndexes);
             }
         } finally {
+            //reset schema change max col unique id
+            maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
             olapTable.writeUnlock();
         }
     }
