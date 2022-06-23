@@ -57,6 +57,7 @@ public class TableAddOrDropColumnsInfoTest {
 
         long dbId = 12345678;
         long tableId = 87654321;
+        long jobId = 23456781;
         List<Column> fullSchema = new ArrayList<>();
         fullSchema.add(new Column("testCol1", ScalarType.createType(PrimitiveType.INT)));
         fullSchema.add(new Column("testCol2", ScalarType.createType(PrimitiveType.VARCHAR)));
@@ -69,7 +70,7 @@ public class TableAddOrDropColumnsInfoTest {
         List<Index> indexes = Lists.newArrayList(new Index("index", Lists.newArrayList("testCol1"), IndexDef.IndexType.BITMAP
             , "xxxxxx"));
 
-        TableAddOrDropColumnsInfo tableAddOrDropColumnsInfo1 = new TableAddOrDropColumnsInfo(dbId, tableId, indexSchemaMap, indexes);
+        TableAddOrDropColumnsInfo tableAddOrDropColumnsInfo1 = new TableAddOrDropColumnsInfo(dbId, tableId, indexSchemaMap, indexes, jobId);
 
         String c1Json = GsonUtils.GSON.toJson(tableAddOrDropColumnsInfo1);
         Text.writeString(out, c1Json);

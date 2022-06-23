@@ -1711,8 +1711,9 @@ public class SchemaChangeHandler extends AlterHandler {
                         olapTable.getId(), maxColUniqueId, ligthSchemaChange);
 
             if (ligthSchemaChange) {
+                long jobId = Catalog.getCurrentCatalog().getNextId();
                 //for schema change add/drop value column optimize, direct modify table meta.
-                Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
+                Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, jobId, false);
                 return;
             } else {
                 createJob(db.getId(), olapTable, indexSchemaMap, propertyMap, newIndexes);

@@ -1314,7 +1314,8 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 if (ligthSchemaChange) {
                     //for schema change add column optimize, direct modify table meta.
                     List<Index> newIndexes = olapTable.getCopiedIndexes();
-                    Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, false);
+                    long jobId = Catalog.getCurrentCatalog().getNextId();
+                    Catalog.getCurrentCatalog().modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, newIndexes, jobId, false);
                 } else {
                     throw new MetaNotFoundException("table_id " + request.getTableId() + " cannot light schema change through rpc.");
                 }

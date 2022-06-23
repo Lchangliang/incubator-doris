@@ -4923,7 +4923,7 @@ public class Catalog {
 
     // the invoker should keep table's write lock
     public void modifyTableAddOrDropColumns(Database db, OlapTable olapTable, Map<Long, List<Column>> indexSchemaMap,
-        List<Index> indexes, boolean isReplay) throws DdlException {
+        List<Index> indexes, long jobId, boolean isReplay) throws DdlException {
 
         LOG.debug("indexSchemaMap:{}, indexes:{}", indexSchemaMap, indexes);
         if (olapTable.getState() == OlapTableState.ROLLUP) {
@@ -5054,13 +5054,13 @@ public class Catalog {
         olapTable.setMaxColUniqueId(maxColUniqueId);
 
         if (!isReplay) {
-            TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(db.getId(), olapTable.getId(), indexSchemaMap, indexes);
+            TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(db.getId(), olapTable.getId(), indexSchemaMap, indexes, jobId);
             LOG.debug("logModifyTableAddOrDropColumns info:{}", info);
             editLog.logModifyTableAddOrDropColumns(info);
         }
 
         //for compatibility, we need create a finished state schema change job v2
-        long jobId = this.getNextId();
+
         SchemaChangeJobV2 schemaChangeJob = new SchemaChangeJobV2(jobId, db.getId(), olapTable.getId(), olapTable.getName(), 1000);
         schemaChangeJob.setJobState(AlterJobV2.JobState.FINISHED);
         schemaChangeJob.setFinishedTimeMs(System.currentTimeMillis());
@@ -5076,12 +5076,13 @@ public class Catalog {
         long tableId = info.getTableId();
         Map<Long, List<Column>> indexSchemaMap = info.getIndexSchemaMap();
         List<Index> indexes = info.getIndexes();
+        long jobId = info.getJobId();
 
         Database db = this.getDbOrMetaException(dbId);
         OlapTable olapTable = (OlapTable) db.getTableOrMetaException(tableId, TableType.OLAP);
         olapTable.writeLock();
         try {
-            modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, indexes, true);
+            modifyTableAddOrDropColumns(db, olapTable, indexSchemaMap, indexes, jobId, true);
         } catch (DdlException e) {
             // should not happen
             LOG.warn("failed to replay modify table add or drop columns", e);
