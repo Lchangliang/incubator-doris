@@ -73,6 +73,7 @@ import org.apache.doris.task.PushTask;
 import org.apache.doris.thrift.TBrokerRangeDesc;
 import org.apache.doris.thrift.TBrokerScanRange;
 import org.apache.doris.thrift.TBrokerScanRangeParams;
+import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TDescriptorTable;
 import org.apache.doris.thrift.TFileFormatType;
 import org.apache.doris.thrift.TFileType;
@@ -101,6 +102,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -461,6 +463,11 @@ public class SparkLoadJob extends BulkLoadJob {
                         for (MaterializedIndex index : indexes) {
                             long indexId = index.getId();
                             int schemaHash = indexToSchemaHash.get(indexId);
+                            
+                            List<TColumn> columnsDesc = new ArrayList<TColumn>();
+                            for (Column column : olapTable.getSchemaByIndexId(indexId)) {
+                                columnsDesc.add(column.toThrift());
+                            }
 
                             int bucket = 0;
                             for (Tablet tablet : index.getTablets()) {
@@ -512,7 +519,7 @@ public class SparkLoadJob extends BulkLoadJob {
                                                 backendId, dbId, olapTable.getId(), partitionId, indexId, tabletId,
                                                 replicaId, schemaHash, 0, id, TPushType.LOAD_V2,
                                                 TPriority.NORMAL, transactionId, taskSignature,
-                                                tBrokerScanRange, params.tDescriptorTable);
+                                                tBrokerScanRange, params.tDescriptorTable, columnsDesc);
                                         if (AgentTaskQueue.addTask(pushTask)) {
                                             batchTask.addTask(pushTask);
                                             if (!tabletToSentReplicaPushTask.containsKey(tabletId)) {

@@ -220,12 +220,6 @@ public class DeleteHandler implements Writable {
                 // to make sure that the delete transaction can be done successfully.
                 txnState.addTableIndexes(olapTable);
 
-                //for light schema change
-                List<TColumn> columnsDesc = new ArrayList<TColumn>();
-                for (Column column : olapTable.getFullSchema()) {
-                    columnsDesc.add(column.toThrift());
-                }
-
                 // task sent to be
                 AgentBatchTask batchTask = new AgentBatchTask();
                 // count total replica num
@@ -244,6 +238,11 @@ public class DeleteHandler implements Writable {
                     for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL)) {
                         long indexId = index.getId();
                         int schemaHash = olapTable.getSchemaHashByIndexId(indexId);
+
+                        List<TColumn> columnsDesc = new ArrayList<TColumn>();
+                        for (Column column : olapTable.getSchemaByIndexId(indexId)) {
+                            columnsDesc.add(column.toThrift());
+                        }
 
                         for (Tablet tablet : index.getTablets()) {
                             long tabletId = tablet.getId();

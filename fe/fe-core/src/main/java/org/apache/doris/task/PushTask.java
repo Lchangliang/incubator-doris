@@ -103,11 +103,11 @@ public class PushTask extends AgentTask {
     public PushTask(long backendId, long dbId, long tableId, long partitionId, long indexId, long tabletId,
                     long replicaId, int schemaHash, int timeoutSecond, long loadJobId, TPushType pushType,
                     TPriority priority, long transactionId, long signature,
-                    TBrokerScanRange tBrokerScanRange, TDescriptorTable tDescriptorTable) {
+                    TBrokerScanRange tBrokerScanRange, TDescriptorTable tDescriptorTable, List<TColumn> columnsDesc) {
         this(null, backendId, dbId, tableId, partitionId, indexId,
              tabletId, replicaId, schemaHash, -1, null,
              0, timeoutSecond, loadJobId, pushType, null, false,
-             priority, TTaskType.REALTIME_PUSH, transactionId, signature, null);
+             priority, TTaskType.REALTIME_PUSH, transactionId, signature, columnsDesc);
         this.tBrokerScanRange = tBrokerScanRange;
         this.tDescriptorTable = tDescriptorTable;
     }
@@ -167,7 +167,6 @@ public class PushTask extends AgentTask {
                     tConditions.add(tCondition);
                 }
                 request.setDeleteConditions(tConditions);
-                request.setColumnsDesc(columnsDesc);
                 break;
             case LOAD_V2:
                 request.setBrokerScanRange(tBrokerScanRange);
@@ -177,6 +176,7 @@ public class PushTask extends AgentTask {
                 LOG.warn("unknown push type. type: " + pushType.name());
                 break;
         }
+        request.setColumnsDesc(columnsDesc);
 
         return request;
     }

@@ -1595,7 +1595,8 @@ Status SchemaChangeHandler::schema_version_convert(TabletSharedPtr base_tablet,
                                                    TabletSharedPtr new_tablet,
                                                    RowsetSharedPtr* base_rowset,
                                                    RowsetSharedPtr* new_rowset,
-                                                   DescriptorTbl desc_tbl) {
+                                                   DescriptorTbl desc_tbl,
+                                                   const TabletSchema* base_schema_change) {
     Status res = Status::OK();
     LOG(INFO) << "begin to convert delta version for schema changing. "
               << "base_tablet=" << base_tablet->full_name()
@@ -1609,7 +1610,7 @@ Status SchemaChangeHandler::schema_version_convert(TabletSharedPtr base_tablet,
 
     const std::unordered_map<std::string, AlterMaterializedViewParam> materialized_function_map;
     if (res = _parse_request(base_tablet, new_tablet, &rb_changer, &sc_sorting, &sc_directly,
-                             materialized_function_map, desc_tbl, nullptr);
+                             materialized_function_map, desc_tbl, base_schema_change);
         !res) {
         LOG(WARNING) << "failed to parse the request. res=" << res;
         return res;
@@ -1623,7 +1624,7 @@ Status SchemaChangeHandler::schema_version_convert(TabletSharedPtr base_tablet,
     // c. Convert data
     DeleteHandler delete_handler;
     std::vector<ColumnId> return_columns;
-    size_t num_cols = base_tablet->tablet_schema().num_columns();
+    size_t num_cols = base_schema_change->num_columns();
     return_columns.resize(num_cols);
     for (int i = 0; i < num_cols; ++i) {
         return_columns[i] = i;
@@ -1631,7 +1632,7 @@ Status SchemaChangeHandler::schema_version_convert(TabletSharedPtr base_tablet,
 
     RowsetReaderContext reader_context;
     reader_context.reader_type = READER_ALTER_TABLE;
-    reader_context.tablet_schema = &base_tablet->tablet_schema();
+    reader_context.tablet_schema = base_schema_change;
     reader_context.need_ordered_result = true;
     reader_context.delete_handler = &delete_handler;
     reader_context.return_columns = &return_columns;
