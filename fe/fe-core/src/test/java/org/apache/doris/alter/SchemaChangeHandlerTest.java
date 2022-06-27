@@ -21,6 +21,7 @@ import org.apache.doris.alter.AlterJobV2;
 import org.apache.doris.alter.AlterJobV2.JobState;
 import org.apache.doris.analysis.AlterTableStmt;
 import org.apache.doris.analysis.ColumnPosition;
+import org.apache.doris.analysis.AssertNumRowsElement.Assertion;
 import org.apache.doris.catalog.Catalog;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Database;
@@ -238,6 +239,26 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
             Assertions.assertEquals(baseIndexName, tbl.getName());
             MaterializedIndexMeta indexMeta = tbl.getIndexMetaByIndexId(tbl.getBaseIndexId());
             Assertions.assertNotNull(indexMeta);
+        } finally {
+            tbl.readUnlock();
+        }
+
+        //process agg add mul value column schema change
+        String addMultiValColStmtStr = "alter table test.sc_agg add column new_v2 int MAX default '0', add column new_v3 int MAX default '1';";
+        AlterTableStmt addMultiValColStmt = (AlterTableStmt) parseAndAnalyzeStmt(addMultiValColStmtStr);
+        Catalog.getCurrentCatalog().getAlterInstance().processAlterTable(addMultiValColStmt);
+        jobSize++;
+        //check alter job, do not create job
+        Assertions.assertEquals(jobSize, alterJobs.size());
+
+        tbl.readLock();
+        try {
+            Assertions.assertEquals(11, tbl.getBaseSchema().size());
+            String baseIndexName = tbl.getIndexNameById(tbl.getBaseIndexId());
+            Assertions.assertEquals(baseIndexName, tbl.getName());
+            MaterializedIndexMeta indexMeta = tbl.getIndexMetaByIndexId(tbl.getBaseIndexId());
+            Assertions.assertNotNull(indexMeta);
+            Assertions.assertEquals(12, tbl.getMaxColUniqueId());
         } finally {
             tbl.readUnlock();
         }

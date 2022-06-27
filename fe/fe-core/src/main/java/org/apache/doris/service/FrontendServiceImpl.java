@@ -146,6 +146,7 @@ import org.apache.thrift.TException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.function.IntSupplier;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1309,8 +1310,15 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 }
                 //4. call schame change function, only for dynamic table feature.
                 SchemaChangeHandler schemaChangeHandler = new SchemaChangeHandler();
-                olapTable.setPendingMaxColUniqueId(olapTable.getMaxColUniqueId());
-                boolean ligthSchemaChange = schemaChangeHandler.processAddColumns(addColumnsClause, olapTable, indexSchemaMap, true);
+                IntSupplier colUniqueIdSupplier = new IntSupplier() {
+                    int pendingMaxColUniqueId = olapTable.getMaxColUniqueId();
+                    @Override
+                    public int getAsInt() {
+                        pendingMaxColUniqueId++;
+                        return pendingMaxColUniqueId;
+                    }
+                };
+                boolean ligthSchemaChange = schemaChangeHandler.processAddColumns(addColumnsClause, olapTable, indexSchemaMap, true, colUniqueIdSupplier);
                 if (ligthSchemaChange) {
                     //for schema change add column optimize, direct modify table meta.
                     List<Index> newIndexes = olapTable.getCopiedIndexes();

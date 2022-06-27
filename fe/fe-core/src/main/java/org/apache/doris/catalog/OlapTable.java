@@ -145,9 +145,6 @@ public class OlapTable extends Table {
 
     private int maxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
 
-    //only used for stash maxColUniqueId in schema change.
-    private int pendingMaxColUniqueId = Column.COLUMN_UNIQUE_ID_INIT_VALUE;
-
     public OlapTable() {
         // for persist
         super(TableType.OLAP);
@@ -210,14 +207,6 @@ public class OlapTable extends Table {
 
     public void setMaxColUniqueId(int maxColUniqueId) {
         this.maxColUniqueId = maxColUniqueId;
-    }
-
-    public int getPendingMaxColUniqueId() {
-        return this.pendingMaxColUniqueId;
-    }
-
-    public void setPendingMaxColUniqueId(int pendingMaxColUniqueId) {
-        this.pendingMaxColUniqueId = pendingMaxColUniqueId;
     }
 
     public boolean dynamicPartitionExists() {

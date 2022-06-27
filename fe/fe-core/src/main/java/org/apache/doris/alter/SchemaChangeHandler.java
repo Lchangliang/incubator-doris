@@ -92,6 +92,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.function.IntSupplier;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -101,6 +102,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
 
 public class SchemaChangeHandler extends AlterHandler {
     private static final Logger LOG = LogManager.getLogger(SchemaChangeHandler.class);
@@ -125,8 +127,17 @@ public class SchemaChangeHandler extends AlterHandler {
         super("schema change", Config.default_schema_change_scheduler_interval_millisecond);
     }
 
+    /**
+     *
+     * @param alterClause
+     * @param olapTable
+     * @param indexSchemaMap
+     * @param colUniqueIdSupplier for multi add columns clause, we need stash middle state of maxColUniqueId
+     * @return true: can light schema change, false: cannot light schema change
+     * @throws DdlException
+     */
     private boolean processAddColumn(AddColumnClause alterClause, OlapTable olapTable,
-                                  Map<Long, List<Column>> indexSchemaMap) throws DdlException {
+                                  Map<Long, List<Column>> indexSchemaMap, IntSupplier colUniqueIdSupplier) throws DdlException {
         Column column = alterClause.getColumn();
         ColumnPosition columnPos = alterClause.getColPos();
         String targetIndexName = alterClause.getRollupName();
@@ -143,13 +154,10 @@ public class SchemaChangeHandler extends AlterHandler {
 
         Set<String> newColNameSet = Sets.newHashSet(column.getName());
 
-        int maxColUniqueId = olapTable.getPendingMaxColUniqueId();
         //only new table generate ColUniqueId, exist table do not.
         if (olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE) {
-            maxColUniqueId++;
-            column.setUniqueId(maxColUniqueId);
+            column.setUniqueId(colUniqueIdSupplier.getAsInt());
         }
-        olapTable.setPendingMaxColUniqueId(maxColUniqueId);
 
         return addColumnInternal(olapTable, column, columnPos, targetIndexId, baseIndexId,
                 indexSchemaMap, newColNameSet, false);
@@ -183,11 +191,13 @@ public class SchemaChangeHandler extends AlterHandler {
      * @param olapTable
      * @param indexSchemaMap
      * @param ignoreSameColumn
+     * @param colUniqueIdSupplier  for multi add columns clause, we need stash middle state of maxColUniqueId
      * @return true: can light schema change, false: cannot light schema change
      * @throws DdlException
      */
     public boolean processAddColumns(AddColumnsClause alterClause, OlapTable olapTable,
-                                   Map<Long, List<Column>> indexSchemaMap, boolean ignoreSameColumn) throws DdlException {
+                                   Map<Long, List<Column>> indexSchemaMap, boolean ignoreSameColumn,
+                                   IntSupplier colUniqueIdSupplier) throws DdlException {
         List<Column> columns = alterClause.getColumns();
         String targetIndexName = alterClause.getRollupName();
         checkIndexExists(olapTable, targetIndexName);
@@ -206,15 +216,12 @@ public class SchemaChangeHandler extends AlterHandler {
             targetIndexId = olapTable.getIndexIdByName(targetIndexName);
         }
 
-        int maxColUniqueId = olapTable.getPendingMaxColUniqueId();
         //for new table calculate column unique id
         if (olapTable.getMaxColUniqueId() > Column.COLUMN_UNIQUE_ID_INIT_VALUE) {
             for (Column column : columns) {
-                maxColUniqueId++;
-                column.setUniqueId(maxColUniqueId);
+                column.setUniqueId(colUniqueIdSupplier.getAsInt());
             }
         }
-        olapTable.setPendingMaxColUniqueId(maxColUniqueId);
 
         boolean ligthSchemaChange = true;
         for (Column column : columns) {
@@ -1585,7 +1592,15 @@ public class SchemaChangeHandler extends AlterHandler {
             //alterClauses can or cannot light schema change
             boolean ligthSchemaChange = true;
             //for multi add colmuns clauses
-            olapTable.setPendingMaxColUniqueId(olapTable.getMaxColUniqueId());
+            IntSupplier colUniqueIdSupplier = new IntSupplier() {
+                public int pendingMaxColUniqueId = olapTable.getMaxColUniqueId();
+                @Override
+                public int getAsInt() {
+                    pendingMaxColUniqueId++;
+                    return pendingMaxColUniqueId;
+                }
+            };
+
             // index id -> index schema
             Map<Long, List<Column>> indexSchemaMap = new HashMap<>();
             for (Map.Entry<Long, List<Column>> entry : olapTable.getIndexIdToSchema(true).entrySet()) {
@@ -1662,13 +1677,13 @@ public class SchemaChangeHandler extends AlterHandler {
 
                 if (alterClause instanceof AddColumnClause) {
                     // add column
-                    boolean clauseCanLigthSchemaChange = processAddColumn((AddColumnClause) alterClause, olapTable, indexSchemaMap);
+                    boolean clauseCanLigthSchemaChange = processAddColumn((AddColumnClause) alterClause, olapTable, indexSchemaMap, colUniqueIdSupplier);
                     if (clauseCanLigthSchemaChange == false) {
                         ligthSchemaChange = false;
                     }
                 } else if (alterClause instanceof AddColumnsClause) {
                     // add columns
-                    boolean clauseCanLigthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap, false);
+                    boolean clauseCanLigthSchemaChange = processAddColumns((AddColumnsClause) alterClause, olapTable, indexSchemaMap, false, colUniqueIdSupplier);
                     if (clauseCanLigthSchemaChange == false) {
                         ligthSchemaChange = false;
                     }
@@ -1705,8 +1720,8 @@ public class SchemaChangeHandler extends AlterHandler {
                 }
             } // end for alter clauses
 
-            LOG.debug("processAddColumns, table: {}({}), pendingMaxColUniqueId: {}, ligthSchemaChange: {}", olapTable.getName(),
-                        olapTable.getId(), olapTable.getPendingMaxColUniqueId(), ligthSchemaChange);
+            LOG.debug("processAddColumns, table: {}({}), ligthSchemaChange: {}", olapTable.getName(),
+                        olapTable.getId(), ligthSchemaChange);
 
             if (ligthSchemaChange) {
                 long jobId = Catalog.getCurrentCatalog().getNextId();
