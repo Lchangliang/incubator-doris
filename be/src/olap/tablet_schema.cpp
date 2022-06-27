@@ -480,6 +480,9 @@ void TabletSchema::init_from_pb(const TabletSchemaPB& schema) {
             _num_null_columns++;
         }
         _field_name_to_index[column.name()] = _num_columns;
+        if (column.col_unique_id() >= 0) {
+            _field_id_to_index[column.col_unique_id()] = _num_columns;
+        }
         _cols.emplace_back(std::move(column));
         _num_columns++;
     }

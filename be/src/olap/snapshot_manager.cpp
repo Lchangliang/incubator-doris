@@ -157,8 +157,9 @@ Status SnapshotManager::convert_rowset_ids(const FilePathDesc& clone_dir_desc, i
     tablet_schema.init_from_pb(new_tablet_meta_pb.schema());
 
     std::unordered_map<Version, RowsetMetaPB*, HashOfVersion> rs_version_map;
-    for (auto& visible_rowset : cloned_tablet_meta_pb.rs_metas()) {
+    for (auto& visible_rowset : *cloned_tablet_meta_pb.mutable_rs_metas()) {
         RowsetMetaPB* rowset_meta = new_tablet_meta_pb.add_rs_metas();
+        
         RowsetId rowset_id = StorageEngine::instance()->next_rowset_id();
         RETURN_NOT_OK(_rename_rowset_id(visible_rowset, clone_dir_desc, tablet_schema, rowset_id,
                                         rowset_meta));

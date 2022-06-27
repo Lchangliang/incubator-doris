@@ -138,17 +138,18 @@ Status Compaction::do_compaction_impl(int64_t permits) {
 
     LOG(INFO) << "start " << merge_type << compaction_name() << ". tablet=" << _tablet->full_name()
               << ", output_version=" << _output_version << ", permits: " << permits;
-
-    // get cur schema if rowset schema exist, rowset schema must be newer than tablet schema
-    auto max_version_rowset =
-            std::max_element(_input_rowsets.begin(), _input_rowsets.end(),
-                             [](const RowsetSharedPtr& a, const RowsetSharedPtr& b) {
-                                 return a->rowset_meta()->tablet_schema()->schema_version() <
-                                        b->rowset_meta()->tablet_schema()->schema_version();
-                             });
-    const TabletSchema* cur_tablet_schema = (*max_version_rowset)->rowset_meta()->tablet_schema();
-    if (cur_tablet_schema == nullptr) {
+    const TabletSchema* cur_tablet_schema = nullptr;
+    if (_input_rowsets.front()->rowset_meta()->tablet_schema() == nullptr) {
         cur_tablet_schema = &(_tablet->tablet_schema());
+    } else {
+        // get cur schema if rowset schema exist, rowset schema must be newer than tablet schema
+        auto max_version_rowset =
+                std::max_element(_input_rowsets.begin(), _input_rowsets.end(),
+                                 [](const RowsetSharedPtr& a, const RowsetSharedPtr& b) {
+                                     return a->rowset_meta()->tablet_schema()->schema_version() <
+                                            b->rowset_meta()->tablet_schema()->schema_version();
+                                 });
+        cur_tablet_schema = (*max_version_rowset)->rowset_meta()->tablet_schema();
     }
 
     RETURN_NOT_OK(construct_output_rowset_writer(cur_tablet_schema));
