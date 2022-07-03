@@ -847,7 +847,7 @@ public class EditLog {
                 }
                 case OperationType.OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS: {
                     final TableAddOrDropColumnsInfo info = (TableAddOrDropColumnsInfo) journal.getData();
-                    catalog.replayModifyTableAddOrDropColumns(info);
+                    catalog.getSchemaChangeHandler().replayModifyTableAddOrDropColumns(info);
                     break;
                 }
                 default: {

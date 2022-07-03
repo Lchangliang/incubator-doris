@@ -69,6 +69,9 @@ public class OperationType {
     public static final short OP_MODIFY_COMMENT = 126;
     public static final short OP_MODIFY_TABLE_ENGINE = 127;
 
+    //schema change for add and drop columns
+    public static final short OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS = 128;
+
     // 30~39 130~139 230~239 ...
     // load job for only hadoop load
     public static final short OP_LOAD_START = 30;
@@ -222,8 +225,6 @@ public class OperationType {
     // policy 310-320
     public static final short OP_CREATE_POLICY = 310;
     public static final short OP_DROP_POLICY = 311;
-    //schema change for add and drop columns 320-329
-    public static final short OP_MODIFY_TABLE_ADD_OR_DROP_COLUMNS = 320;
 
     // datasource 312-315
     public static final short OP_CREATE_DS = 312;
