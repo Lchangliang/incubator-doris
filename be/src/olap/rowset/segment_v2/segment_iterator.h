@@ -108,6 +108,9 @@ private:
                                    std::vector<rowid_t>& rowid_vector, uint16_t* sel_rowid_idx,
                                    size_t select_size, vectorized::MutableColumns* mutable_columns);
 
+    void _vec_init_prefetch_column_pages();
+    void _init_prefetch_column_pages();
+
     template <class Container>
     Status _output_column_by_sel_idx(vectorized::Block* block, const Container& column_ids,
                                      uint16_t* sel_rowid_idx, uint16_t select_size) {
@@ -146,6 +149,21 @@ private:
         }
     }
 
+    bool next_range(const uint32_t max_range_size, rowid_t _cur_rowid, uint32_t* from,
+                    uint32_t* to) {
+        if (_cur_index == _ranges.size() ||
+            (_cur_index == (_ranges.size() - 1) && _cur_rowid >= _ranges[_cur_index].second)) {
+            return false;
+        }
+        if (_cur_rowid >= _ranges[_cur_index].second) {
+            _cur_index++;
+        }
+        *from = _cur_rowid < _ranges[_cur_index].first ? _ranges[_cur_index].first : _cur_rowid;
+        uint32_t limit = *from + max_range_size;
+        *to = limit < _ranges[_cur_index].second ? limit : _ranges[_cur_index].second;
+        return true;
+    }
+
 private:
     class BitmapRangeIterator;
 
@@ -160,6 +178,8 @@ private:
     roaring::Roaring _row_bitmap;
     // an iterator for `_row_bitmap` that can be used to extract row range to scan
     std::unique_ptr<BitmapRangeIterator> _range_iter;
+    std::vector<std::pair<uint32_t, uint32_t>> _ranges;
+    size_t _cur_index = 0;
     // the next rowid to read
     rowid_t _cur_rowid;
     // members related to lazy materialization read

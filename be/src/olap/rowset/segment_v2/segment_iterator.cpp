@@ -17,6 +17,7 @@
 
 #include "olap/rowset/segment_v2/segment_iterator.h"
 
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <utility>
@@ -49,6 +50,43 @@ public:
     }
 
     bool has_more_range() const { return !_eof; }
+
+    std::vector<std::pair<uint32_t, uint32_t>> get_all_continue_ranges() {
+        std::vector<std::pair<uint32_t, uint32_t>> ranges;
+        while (has_more_range()) {
+            std::pair<uint32_t, uint32_t> range;
+            next_continue_range(&range.first, &range.second);
+            ranges.push_back(range);
+        }
+        return ranges;
+    }
+
+    bool next_continue_range(uint32_t* from, uint32_t* to) {
+        if (_eof) {
+            return false;
+        }
+
+        *from = _buf[_buf_pos];
+        uint32_t range_size = 0;
+        uint32_t expect_val = _buf[_buf_pos]; // this initial value just make first batch valid
+
+        while (!_eof && expect_val == _buf[_buf_pos] &&
+               _buf[_buf_size - 1] - _buf[_buf_pos] == _buf_size - 1 - _buf_pos) {
+            range_size += _buf_size - _buf_pos;
+            expect_val = _buf[_buf_size - 1] + 1;
+            _read_next_batch();
+        }
+
+        // promise remain range not will reach next batch
+        if (!_eof && expect_val == _buf[_buf_pos]) {
+            do {
+                _buf_pos++;
+                range_size++;
+            } while (_buf[_buf_pos] == _buf[_buf_pos - 1] + 1);
+        }
+        *to = *from + range_size;
+        return true;
+    }
 
     // read next range into [*from, *to) whose size <= max_range_size.
     // return false when there is no more range.
@@ -145,14 +183,34 @@ Status SegmentIterator::_init(bool is_vec) {
         RETURN_IF_ERROR(_get_row_ranges_by_keys());
     }
     RETURN_IF_ERROR(_get_row_ranges_by_column_conditions());
+    BitmapRangeIterator iter(_row_bitmap);
+    _ranges = iter.get_all_continue_ranges();
     if (is_vec) {
         _vec_init_lazy_materialization();
         _vec_init_char_column_id();
+        _vec_init_prefetch_column_pages();
     } else {
         _init_lazy_materialization();
+        _init_prefetch_column_pages();
     }
-    _range_iter.reset(new BitmapRangeIterator(_row_bitmap));
     return Status::OK();
+}
+
+void SegmentIterator::_vec_init_prefetch_column_pages() {
+    for (auto cid : _first_read_column_ids) {
+        _column_iterators[cid]->get_all_continue_pages(_ranges);
+    }
+    if (_lazy_materialization_read && (_is_need_vec_eval || _is_need_short_eval)) {
+        for (auto cid : _non_predicate_columns) {
+            _column_iterators[cid]->get_all_continue_pages(_ranges);
+        }
+    }
+}
+
+void SegmentIterator::_init_prefetch_column_pages() {
+    for (auto cid : _schema.column_ids()) {
+        _column_iterators[cid]->get_all_continue_pages(_ranges);
+    }
 }
 
 Status SegmentIterator::_get_row_ranges_by_keys() {
@@ -524,7 +582,7 @@ Status SegmentIterator::next_batch(RowBlockV2* block) {
             uint32_t range_from;
             uint32_t range_to;
             bool has_next_range =
-                    _range_iter->next_range(nrows_read_limit - nrows_read, &range_from, &range_to);
+                    next_range(nrows_read_limit - nrows_read, _cur_rowid, &range_from, &range_to);
             if (!has_next_range) {
                 break;
             }
@@ -837,7 +895,7 @@ Status SegmentIterator::_read_columns_by_index(uint32_t nrows_read_limit, uint32
         uint32_t range_from;
         uint32_t range_to;
         bool has_next_range =
-                _range_iter->next_range(nrows_read_limit - nrows_read, &range_from, &range_to);
+                next_range(nrows_read_limit - nrows_read, _cur_rowid, &range_from, &range_to);
         if (!has_next_range) {
             break;
         }

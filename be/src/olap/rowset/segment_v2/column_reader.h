@@ -72,6 +72,8 @@ struct ColumnIteratorOptions {
     // page types are divided into DATA_PAGE & INDEX_PAGE
     // INDEX_PAGE including index_page, dict_page and short_key_page
     PageTypePB type;
+    // only use in vec
+    bool use_prefetch = false;
 
     void sanity_check() const {
         CHECK_NOTNULL(file_reader);
@@ -108,6 +110,11 @@ public:
     Status read_page(const ColumnIteratorOptions& iter_opts, const PagePointer& pp,
                      PageHandle* handle, Slice* page_body, PageFooterPB* footer,
                      BlockCompressionCodec* codec) const;
+
+    // read pages from file into page handles
+    Status read_pages(const ColumnIteratorOptions& iter_opts, const std::vector<PagePointer>& pps,
+                      std::vector<PageHandle>& handle, std::vector<Slice>& page_body,
+                      std::vector<PageFooterPB>& footer, BlockCompressionCodec* codec) const;
 
     bool is_nullable() const { return _meta.is_nullable(); }
 
@@ -254,6 +261,11 @@ public:
         return Status::NotSupported("read_by_rowids not implement");
     }
 
+    virtual Status get_all_continue_pages(
+            const std::vector<std::pair<uint32_t, uint32_t>>& row_ranges) {
+        return Status::NotSupported("get_all_continue_pages not implement");
+    }
+
     virtual ordinal_t get_current_ordinal() const = 0;
 
     virtual Status get_row_ranges_by_zone_map(CondColumn* cond_column, CondColumn* delete_condition,
@@ -309,10 +321,15 @@ public:
 
     bool is_all_dict_encoding() const override { return _is_all_dict_encoding; }
 
+    Status get_all_continue_pages(
+            const std::vector<std::pair<uint32_t, uint32_t>>& row_ranges) override;
+
 private:
     void _seek_to_pos_in_page(ParsedPage* page, ordinal_t offset_in_page) const;
     Status _load_next_page(bool* eos);
     Status _read_data_page(const OrdinalPageIndexIterator& iter);
+    Status _read_data_pages(const std::vector<OrdinalPageIndexIterator>& iter, uint32_t start,
+                            uint32_t size);
 
 private:
     ColumnReader* _reader;
@@ -341,6 +358,14 @@ private:
     bool _is_all_dict_encoding = false;
 
     std::unique_ptr<StringRef[]> _dict_word_info;
+
+    std::vector<std::vector<OrdinalPageIndexIterator>> _page_ranges;
+    uint32_t _cur_range = 0;
+    uint32_t _cur_page_idx = 0;
+    bool _use_prefetch = false;
+    uint32_t prefetch_size = 5;
+    std::vector<ParsedPage> _pages;
+    ParsedPage* _cur_page;
 };
 
 class EmptyFileColumnIterator final : public ColumnIterator {
