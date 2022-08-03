@@ -110,9 +110,8 @@ public:
         }
     }
 
-    Status evaluate(const Schema& schema, const std::vector<BitmapIndexIterator*>& iterators,
+    Status evaluate(BitmapIndexIterator* iterator,
                     uint32_t num_rows, roaring::Roaring* result) const override {
-        BitmapIndexIterator* iterator = iterators[_column_id];
         if (iterator == nullptr) {
             return Status::OK();
         }
@@ -342,3 +341,4 @@ template <class T>
 using NotInListPredicate = InListPredicateBase<T, PredicateType::NOT_IN_LIST>;
 
 } //namespace doris
+

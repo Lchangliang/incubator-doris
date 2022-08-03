@@ -40,7 +40,7 @@ public:
     }
     void evaluate_and(ColumnBlock* block, uint16_t* sel, uint16_t size,
                       bool* flags) const override {}
-    Status evaluate(const Schema& schema, const std::vector<BitmapIndexIterator*>& iterators,
+    Status evaluate(BitmapIndexIterator* iterator,
                     uint32_t num_rows, roaring::Roaring* roaring) const override {
         return Status::OK();
     }
