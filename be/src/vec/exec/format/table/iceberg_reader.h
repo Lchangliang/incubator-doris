@@ -25,13 +25,17 @@
 #include "vec/exec/format/parquet/parquet_common.h"
 #include "vec/exprs/vexpr.h"
 
-namespace doris::vectorized {
+namespace doris {
+
+struct IOContext;
+
+namespace vectorized {
 
 class IcebergTableReader : public TableFormatReader {
 public:
     IcebergTableReader(GenericReader* file_format_reader, RuntimeProfile* profile,
                        RuntimeState* state, const TFileScanRangeParams& params,
-                       const TFileRangeDesc& range);
+                       const TFileRangeDesc& range, IOContext* io_ctx);
     ~IcebergTableReader() override = default;
 
     Status init_row_filters(const TFileRangeDesc& range) override;
@@ -83,6 +87,8 @@ private:
     const TFileRangeDesc& _range;
     IcebergProfile _iceberg_profile;
     std::vector<int64_t> _delete_rows;
-};
 
-} // namespace doris::vectorized
+    IOContext* _io_ctx;
+};
+} // namespace vectorized
+} // namespace doris
