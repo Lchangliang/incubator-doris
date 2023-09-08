@@ -32,5 +32,24 @@ using uint128_t = vectorized::UInt128;
 using UInt128Hash = vectorized::UInt128Hash;
 static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
 
+struct FileCacheSettings;
+// default 1 : 17 : 2
+enum FileCacheType {
+    INDEX,
+    NORMAL,
+    DISPOSABLE,
+    TTL,
+};
+
+struct Key {
+    uint128_t key;
+    std::string to_string() const;
+
+    Key() = default;
+    explicit Key(const uint128_t& key_) : key(key_) {}
+
+    bool operator==(const Key& other) const { return key == other.key; }
+};
+
 } // namespace io
 } // namespace doris

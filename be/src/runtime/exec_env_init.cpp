@@ -38,6 +38,7 @@
 #include "common/logging.h"
 #include "common/status.h"
 #include "io/cache/block/block_file_cache_factory.h"
+#include "io/cache/block/block_file_cache.h"
 #include "io/fs/file_meta_cache.h"
 #include "io/fs/s3_file_write_bufferpool.h"
 #include "olap/memtable_memory_limiter.h"
@@ -418,6 +419,13 @@ Status ExecEnv::_init_mem_env() {
     _segment_loader = new SegmentLoader(segment_cache_capacity);
 
     _schema_cache = new SchemaCache(config::schema_cache_capacity);
+    size_t block_file_cache_fd_cache_size =
+            std::min((uint64_t)config::file_cache_max_file_reader_cache_size, fd_number / 3);
+    LOG(INFO) << "max file reader cache size is: " << block_file_cache_fd_cache_size
+              << ", resource hard limit is: " << fd_number
+              << ", config file_cache_max_file_reader_cache_size is: "
+              << config::file_cache_max_file_reader_cache_size;
+    config::file_cache_max_file_reader_cache_size = block_file_cache_fd_cache_size;
 
     _lookup_connection_cache = LookupConnectionCache::create_global_instance(
             config::lookup_connection_cache_bytes_limit);

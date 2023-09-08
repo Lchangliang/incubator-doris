@@ -62,8 +62,8 @@ private:
     std::pair<size_t, size_t> _align_size(size_t offset, size_t size) const;
 
     FileReaderSPtr _remote_file_reader;
-    IFileCache::Key _cache_key;
-    CloudFileCachePtr _cache;
+    Key _cache_key;
+    BlockFileCachePtr _cache;
     bool _is_doris_table;
 
     struct ReadStatistics {

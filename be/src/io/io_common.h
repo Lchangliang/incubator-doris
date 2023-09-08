@@ -61,6 +61,7 @@ public:
     const TUniqueId* query_id = nullptr;
     bool is_disposable = false;
     bool read_segment_index = false;
+    int64_t expiration_time {0};
     FileCacheStatistics* file_cache_stats = nullptr;
 };
 

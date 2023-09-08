@@ -38,9 +38,10 @@ struct FileCacheSettings {
     size_t index_queue_elements {0};
     size_t query_queue_size {0};
     size_t query_queue_elements {0};
-    size_t max_file_segment_size {0};
+    size_t max_file_block_size {0};
     size_t max_query_cache_size {0};
 };
+FileCacheSettings calc_settings(size_t total_size, size_t max_query_cache_size);
 
 } // namespace io
 } // namespace doris

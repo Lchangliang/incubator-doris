@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 // This file is copied from
-// https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/FileSegment.h
+// https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/Fileblock.h
 // and modified by Doris
 
 #pragma once
@@ -32,8 +32,9 @@
 #include <utility>
 
 #include "common/status.h"
-#include "io/cache/block/block_file_cache.h"
+#include "io/cache/block/block_file_cache_fwd.h"
 #include "io/fs/file_writer.h"
+#include "util/lock.h"
 #include "util/slice.h"
 
 namespace doris {
@@ -41,38 +42,38 @@ namespace io {
 
 class FileBlock;
 class FileReader;
+class BlockFileCache;
 
 using FileBlockSPtr = std::shared_ptr<FileBlock>;
 using FileBlocks = std::list<FileBlockSPtr>;
 
 class FileBlock {
-    friend class LRUFileCache;
+    friend class BlockFileCache;
     friend struct FileBlocksHolder;
 
 public:
-    using Key = IFileCache::Key;
     using LocalWriterPtr = std::unique_ptr<FileWriter>;
     using LocalReaderPtr = std::weak_ptr<FileReader>;
 
     enum class State {
         DOWNLOADED,
         /**
-         * When file segment is first created and returned to user, it has state EMPTY.
+         * When file block is first created and returned to user, it has state EMPTY.
          * EMPTY state can become DOWNLOADING when getOrSetDownaloder is called successfully
-         * by any owner of EMPTY state file segment.
+         * by any owner of EMPTY state file block.
          */
         EMPTY,
         /**
-         * A newly created file segment never has DOWNLOADING state until call to getOrSetDownloader
-         * because each cache user might acquire multiple file segments and reads them one by one,
-         * so only user which actually needs to read this segment earlier than others - becomes a downloader.
+         * A newly created file block never has DOWNLOADING state until call to getOrSetDownloader
+         * because each cache user might acquire multiple file blocks and reads them one by one,
+         * so only user which actually needs to read this block earlier than others - becomes a downloader.
          */
         DOWNLOADING,
         SKIP_CACHE,
     };
 
-    FileBlock(size_t offset, size_t size, const Key& key, IFileCache* cache, State download_state,
-              CacheType cache_type);
+    FileBlock(size_t offset, size_t size, const Key& key, BlockFileCache* cache,
+              State download_state, FileCacheType cache_type, int64_t expiration_time);
 
     ~FileBlock();
 
@@ -98,7 +99,7 @@ public:
         }
     };
 
-    const Range& range() const { return _segment_range; }
+    const Range& range() const { return _block_range; }
 
     const Key& key() const { return _file_key; }
 
@@ -116,19 +117,19 @@ public:
     Status finalize_write();
 
     // set downloader if state == EMPTY
-    std::string get_or_set_downloader();
+    uint64_t get_or_set_downloader();
 
-    std::string get_downloader() const;
+    uint64_t get_downloader() const;
 
-    void reset_downloader(std::lock_guard<std::mutex>& segment_lock);
+    void reset_downloader(std::lock_guard<doris::Mutex>& block_lock);
 
     bool is_downloader() const;
 
     bool is_downloaded() const { return _is_downloaded.load(); }
 
-    CacheType cache_type() const { return _cache_type; }
+    FileCacheType cache_type() const { return _cache_type; }
 
-    static std::string get_caller_id();
+    static uint64_t get_caller_id();
 
     size_t get_download_offset() const;
 
@@ -136,30 +137,38 @@ public:
 
     std::string get_info_for_log() const;
 
-    std::string get_path_in_local_cache() const;
+    std::string get_path_in_local_cache(bool is_tmp = false) const;
 
-    State state_unlock(std::lock_guard<std::mutex>&) const;
+    bool change_cache_type(FileCacheType new_type);
+
+    void change_cache_type_self(FileCacheType new_type);
+
+    void update_expiration_time(int64_t expiration_time) { _expiration_time = expiration_time; }
+
+    int64_t expiration_time() const { return _expiration_time; }
+
+    State state_unlock(std::lock_guard<doris::Mutex>&) const;
 
     FileBlock& operator=(const FileBlock&) = delete;
     FileBlock(const FileBlock&) = delete;
 
 private:
-    size_t get_downloaded_size(std::lock_guard<std::mutex>& segment_lock) const;
-    std::string get_info_for_log_impl(std::lock_guard<std::mutex>& segment_lock) const;
+    size_t get_downloaded_size(std::lock_guard<doris::Mutex>& block_lock) const;
+    std::string get_info_for_log_impl(std::lock_guard<doris::Mutex>& block_lock) const;
     bool has_finalized_state() const;
 
-    Status set_downloaded(std::lock_guard<std::mutex>& segment_lock);
-    bool is_downloader_impl(std::lock_guard<std::mutex>& segment_lock) const;
+    Status set_downloaded(std::lock_guard<doris::Mutex>& block_lock);
+    bool is_downloader_impl(std::lock_guard<doris::Mutex>& block_lock) const;
 
-    void complete_unlocked(std::lock_guard<std::mutex>& segment_lock);
+    void complete_unlocked(std::lock_guard<doris::Mutex>& block_lock);
 
-    void reset_downloader_impl(std::lock_guard<std::mutex>& segment_lock);
+    void reset_downloader_impl(std::lock_guard<doris::Mutex>& block_lock);
 
-    const Range _segment_range;
+    Range _block_range;
 
     State _download_state;
 
-    std::string _downloader_id;
+    uint64_t _downloader_id {0};
 
     LocalWriterPtr _cache_writer;
     LocalReaderPtr _cache_reader;
@@ -168,10 +177,10 @@ private:
 
     /// global locking order rule:
     /// 1. cache lock
-    /// 2. segment lock
+    /// 2. block lock
 
-    mutable std::mutex _mutex;
-    std::condition_variable _cv;
+    mutable doris::Mutex _mutex;
+    doris::ConditionVariable _cv;
 
     /// Protects downloaded_size access with actual write into fs.
     /// downloaded_size is not protected by download_mutex in methods which
@@ -179,31 +188,33 @@ private:
     /// as downloaded_size is updated only in FileBlock::write() method.
     /// Such methods are identified by isDownloader() check at their start,
     /// e.g. they are executed strictly by the same thread, sequentially.
-    mutable std::mutex _download_mutex;
+    mutable doris::Mutex _download_mutex;
 
     Key _file_key;
-    IFileCache* _cache;
+    BlockFileCache* _cache;
 
     std::atomic<bool> _is_downloaded {false};
-    CacheType _cache_type;
+    FileCacheType _cache_type;
+    int64_t _expiration_time {0};
 };
 
 struct FileBlocksHolder {
-    explicit FileBlocksHolder(FileBlocks&& file_segments_)
-            : file_segments(std::move(file_segments_)) {}
+    explicit FileBlocksHolder(FileBlocks&& file_blocks) : file_blocks(std::move(file_blocks)) {}
 
     FileBlocksHolder(FileBlocksHolder&& other) noexcept
-            : file_segments(std::move(other.file_segments)) {}
+            : file_blocks(std::move(other.file_blocks)) {}
 
     FileBlocksHolder& operator=(const FileBlocksHolder&) = delete;
     FileBlocksHolder(const FileBlocksHolder&) = delete;
 
     ~FileBlocksHolder();
 
-    FileBlocks file_segments {};
+    FileBlocks file_blocks;
 
     std::string to_string();
 };
+
+using FileBlocksHolderPtr = std::unique_ptr<FileBlocksHolder>;
 
 } // namespace io
 } // namespace doris

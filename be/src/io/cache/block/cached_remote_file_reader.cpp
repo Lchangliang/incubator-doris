@@ -31,7 +31,7 @@
 #include "common/config.h"
 #include "io/cache/block/block_file_cache.h"
 #include "io/cache/block/block_file_cache_factory.h"
-#include "io/cache/block/block_file_segment.h"
+#include "io/cache/block/file_block.h"
 #include "io/fs/file_reader.h"
 #include "io/io_common.h"
 #include "util/bit_util.h"
@@ -46,12 +46,12 @@ CachedRemoteFileReader::CachedRemoteFileReader(FileReaderSPtr remote_file_reader
         : _remote_file_reader(std::move(remote_file_reader)) {
     _is_doris_table = opts.is_doris_table;
     if (_is_doris_table) {
-        _cache_key = IFileCache::hash(path().filename().native());
+        _cache_key = BlockFileCache::hash(path().filename().native());
         _cache = FileCacheFactory::instance()->get_by_path(_cache_key);
     } else {
         // Use path and modification time to build cache key
         std::string unique_path = fmt::format("{}:{}", path().native(), opts.mtime);
-        _cache_key = IFileCache::hash(unique_path);
+        _cache_key = BlockFileCache::hash(unique_path);
         if (opts.cache_base_path.empty()) {
             // if cache path is not specified by session variable, chose randomly.
             _cache = FileCacheFactory::instance()->get_by_path(_cache_key);
@@ -77,14 +77,14 @@ Status CachedRemoteFileReader::close() {
 
 std::pair<size_t, size_t> CachedRemoteFileReader::_align_size(size_t offset,
                                                               size_t read_size) const {
-    size_t segment_size =
-            std::min(std::max(read_size, (size_t)config::file_cache_min_file_segment_size),
-                     (size_t)config::file_cache_max_file_segment_size);
-    segment_size = BitUtil::next_power_of_two(segment_size);
+    size_t block_size =
+            std::min(std::max(read_size, (size_t)config::file_cache_min_file_block_size),
+                     (size_t)config::file_cache_max_file_block_size);
+    block_size = BitUtil::next_power_of_two(block_size);
     size_t left = offset;
     size_t right = offset + read_size - 1;
-    size_t align_left = (left / segment_size) * segment_size;
-    size_t align_right = (right / segment_size + 1) * segment_size;
+    size_t align_left = (left / block_size) * block_size;
+    size_t align_right = (right / block_size + 1) * block_size;
     align_right = align_right < size() ? align_right : size();
     size_t align_size = align_right - align_left;
     return std::make_pair(align_left, align_size);
@@ -98,18 +98,18 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
     auto [align_left, align_size] = _align_size(offset, bytes_req);
     CacheContext cache_context(io_ctx);
     FileBlocksHolder holder = _cache->get_or_set(_cache_key, align_left, align_size, cache_context);
-    std::vector<FileBlockSPtr> empty_segments;
-    for (auto& segment : holder.file_segments) {
-        switch (segment->state()) {
+    std::vector<FileBlockSPtr> empty_blocks;
+    for (auto& block : holder.file_blocks) {
+        switch (block->state()) {
         case FileBlock::State::EMPTY:
-            segment->get_or_set_downloader();
-            if (segment->is_downloader()) {
-                empty_segments.push_back(segment);
+            block->get_or_set_downloader();
+            if (block->is_downloader()) {
+                empty_blocks.push_back(block);
             }
             stats.hit_cache = false;
             break;
         case FileBlock::State::SKIP_CACHE:
-            empty_segments.push_back(segment);
+            empty_blocks.push_back(block);
             stats.hit_cache = false;
             stats.skip_cache = true;
             break;
@@ -123,9 +123,9 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
     stats.bytes_read += bytes_req;
     size_t empty_start = 0;
     size_t empty_end = 0;
-    if (!empty_segments.empty()) {
-        empty_start = empty_segments.front()->range().left;
-        empty_end = empty_segments.back()->range().right;
+    if (!empty_blocks.empty()) {
+        empty_start = empty_blocks.front()->range().left;
+        empty_end = empty_blocks.back()->range().right;
         size_t size = empty_end - empty_start + 1;
         std::unique_ptr<char[]> buffer(new char[size]);
         {
@@ -133,16 +133,16 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
             RETURN_IF_ERROR(_remote_file_reader->read_at(empty_start, Slice(buffer.get(), size),
                                                          &size, io_ctx));
         }
-        for (auto& segment : empty_segments) {
-            if (segment->state() == FileBlock::State::SKIP_CACHE) {
+        for (auto& block : empty_blocks) {
+            if (block->state() == FileBlock::State::SKIP_CACHE) {
                 continue;
             }
             SCOPED_RAW_TIMER(&stats.local_write_timer);
-            char* cur_ptr = buffer.get() + segment->range().left - empty_start;
-            size_t segment_size = segment->range().size();
-            RETURN_IF_ERROR(segment->append(Slice(cur_ptr, segment_size)));
-            RETURN_IF_ERROR(segment->finalize_write());
-            stats.bytes_write_into_file_cache += segment_size;
+            char* cur_ptr = buffer.get() + block->range().left - empty_start;
+            size_t block_size = block->range().size();
+            RETURN_IF_ERROR(block->append(Slice(cur_ptr, block_size)));
+            RETURN_IF_ERROR(block->finalize_write());
+            stats.bytes_write_into_file_cache += block_size;
         }
         // copy from memory directly
         size_t right_offset = offset + result.size - 1;
@@ -159,12 +159,12 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
     size_t current_offset = offset;
     size_t end_offset = offset + bytes_req - 1;
     *bytes_read = 0;
-    for (auto& segment : holder.file_segments) {
+    for (auto& block : holder.file_blocks) {
         if (current_offset > end_offset) {
             break;
         }
-        size_t left = segment->range().left;
-        size_t right = segment->range().right;
+        size_t left = block->range().left;
+        size_t right = block->range().right;
         if (right < offset) {
             continue;
         }
@@ -175,24 +175,24 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
             current_offset = right + 1;
             continue;
         }
-        FileBlock::State segment_state;
+        FileBlock::State block_state = block->state();
         int64_t wait_time = 0;
         static int64_t MAX_WAIT_TIME = 10;
-        if (segment->state() != FileBlock::State::DOWNLOADED) {
+        if (block_state != FileBlock::State::DOWNLOADED) {
             do {
                 {
                     SCOPED_RAW_TIMER(&stats.remote_read_timer);
-                    segment_state = segment->wait();
+                    block_state = block->wait();
                 }
-                if (segment_state == FileBlock::State::DOWNLOADED) {
+                if (block_state == FileBlock::State::DOWNLOADED) {
                     break;
                 }
-                if (segment_state != FileBlock::State::DOWNLOADING) {
+                if (block_state != FileBlock::State::DOWNLOADING) {
                     return Status::IOError(
                             "File Cache State is {}, the cache downloader encounters an error, "
                             "please "
                             "retry it",
-                            segment_state);
+                            block_state);
                 }
             } while (++wait_time < MAX_WAIT_TIME);
         }
@@ -202,7 +202,7 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
         size_t file_offset = current_offset - left;
         {
             SCOPED_RAW_TIMER(&stats.local_read_timer);
-            RETURN_IF_ERROR(segment->read_at(
+            RETURN_IF_ERROR(block->read_at(
                     Slice(result.data + (current_offset - offset), read_size), file_offset));
         }
         *bytes_read += read_size;

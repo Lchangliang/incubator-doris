@@ -39,26 +39,33 @@ class FileCacheFactory {
 public:
     static FileCacheFactory* instance();
 
-    void create_file_cache(const std::string& cache_base_path,
-                           const FileCacheSettings& file_cache_settings, Status* status);
+    Status create_file_cache(const std::string& cache_base_path,
+                             FileCacheSettings file_cache_settings);
 
     size_t try_release();
 
     size_t try_release(const std::string& base_path);
 
-    CloudFileCachePtr get_by_path(const IFileCache::Key& key);
-    CloudFileCachePtr get_by_path(const std::string& cache_base_path);
-    std::vector<IFileCache::QueryFileCacheContextHolderPtr> get_query_context_holders(
+    Status reload_file_cache();
+
+    void set_read_only();
+
+    size_t get_total_cache_size() const { return _total_cache_size; }
+
+    size_t get_cache_instance_size() const { return _caches.size(); }
+
+    BlockFileCachePtr get_by_path(const Key& key);
+    BlockFileCachePtr get_by_path(const std::string& cache_base_path);
+    std::vector<BlockFileCache::QueryFileCacheContextHolderPtr> get_query_context_holders(
             const TUniqueId& query_id);
     FileCacheFactory() = default;
     FileCacheFactory& operator=(const FileCacheFactory&) = delete;
     FileCacheFactory(const FileCacheFactory&) = delete;
 
 private:
-    // to protect following containers
-    std::mutex _cache_mutex;
-    std::vector<std::unique_ptr<IFileCache>> _caches;
-    std::unordered_map<std::string, CloudFileCachePtr> _path_to_cache;
+    std::vector<std::unique_ptr<BlockFileCache>> _caches;
+    std::unordered_map<std::string, BlockFileCachePtr> _path_to_cache;
+    size_t _total_cache_size = 0;
 };
 
 } // namespace io
