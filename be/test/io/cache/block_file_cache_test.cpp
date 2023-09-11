@@ -27,6 +27,8 @@
 #include <chrono> // IWYU pragma: keep
 #include <condition_variable>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -926,11 +928,12 @@ TEST(BlockFileCache, change_cache_type) {
         blocks[0]->change_cache_type_self(io::FileCacheType::INDEX);
         blocks[0]->finalize_write();
         auto key_str = key.to_string();
-        auto subdir = io::BlockFileCache::USE_CACHE_VERSION2
-                          ? fs::path(cache_base_path) / key_str.substr(0, 3) /
-                                    (key_str + "_" + std::to_string(blocks[0]->expiration_time()))
-                          : fs::path(cache_base_path) /
-                                    (key_str + "_" + std::to_string(blocks[0]->expiration_time()));
+        auto subdir =
+                io::BlockFileCache::USE_CACHE_VERSION2
+                        ? fs::path(cache_base_path) / key_str.substr(0, 3) /
+                                  (key_str + "_" + std::to_string(blocks[0]->expiration_time()))
+                        : fs::path(cache_base_path) /
+                                  (key_str + "_" + std::to_string(blocks[0]->expiration_time()));
         ASSERT_TRUE(fs::exists(subdir / "0_idx"));
     }
     if (fs::exists(cache_base_path)) {
@@ -1090,6 +1093,54 @@ TEST(BlockFileCache, fd_cache_evict) {
     if (fs::exists(cache_base_path)) {
         fs::remove_all(cache_base_path);
     }
+}
+
+TEST(BlockFileCache, rebuild_data_dir) {
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+    auto key = io::BlockFileCache::hash("key1");
+    std::string value = "my house";
+    std::string key_str = key.to_string();
+    fs::create_directories(cache_base_path);
+    std::string second_dir = cache_base_path + "/" + key_str.substr(0, 3);
+    std::string third_dir = second_dir + "/" + key_str;
+    std::string file = third_dir + "/0";
+    fs::create_directories(second_dir);
+    fs::create_directories(third_dir);
+    fs::path file_path {file};
+    std::ofstream output {file_path};
+    output << value;
+    output.close();
+    doris::config::enable_file_cache_query_limit = true;
+    fs::create_directories(cache_base_path);
+    io::FileCacheSettings settings;
+    settings.index_queue_elements = 0;
+    settings.index_queue_size = 0;
+    settings.disposable_queue_size = 0;
+    settings.disposable_queue_elements = 0;
+    settings.query_queue_size = 15;
+    settings.query_queue_elements = 5;
+    settings.max_file_block_size = 10;
+    settings.max_query_cache_size = 15;
+    settings.total_size = 15;
+    io::BlockFileCache cache(cache_base_path, settings);
+    ASSERT_TRUE(cache.initialize());
+    while (true) {
+        if (cache.get_lazy_open_success()) {
+            break;
+        };
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    io::CacheContext context;
+    context.cache_type = io::FileCacheType::NORMAL;
+    auto holder = cache.get_or_set(key, 0, 8, context);
+    auto blocks = fromHolder(holder);
+    ASSERT_GE(blocks.size(), 1);
+    assert_range(1, blocks[0], io::FileBlock::Range(0, 7), io::FileBlock::State::DOWNLOADED);
+    std::unique_ptr<char[]> buffer = std::make_unique<char[]>(8);
+    blocks[0]->read_at(Slice(buffer.get(), 8), 0);
+    EXPECT_EQ(value, std::string(buffer.get(), 8));
 }
 
 } // namespace doris::io
