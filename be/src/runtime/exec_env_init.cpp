@@ -291,24 +291,16 @@ Status ExecEnv::init_pipeline_task_scheduler() {
 void ExecEnv::init_file_cache_factory() {
     // Load file cache before starting up daemon threads to make sure StorageEngine is read.
     if (doris::config::enable_file_cache) {
-        _file_cache_factory = new io::FileCacheFactory();
-        io::IFileCache::init();
         std::unordered_set<std::string> cache_path_set;
         std::vector<doris::CachePath> cache_paths;
-        Status olap_res =
-                doris::parse_conf_cache_paths(doris::config::file_cache_path, cache_paths);
-        if (!olap_res) {
+        Status rest = doris::parse_conf_cache_paths(doris::config::file_cache_path, cache_paths);
+        if (!rest) {
             LOG(FATAL) << "parse config file cache path failed, path="
                        << doris::config::file_cache_path;
             exit(-1);
         }
 
-        std::unique_ptr<doris::ThreadPool> file_cache_init_pool;
-        doris::ThreadPoolBuilder("FileCacheInitThreadPool")
-                .set_min_threads(cache_paths.size())
-                .set_max_threads(cache_paths.size())
-                .build(&file_cache_init_pool);
-
+        std::vector<std::thread> file_cache_init_threads;
         std::list<doris::Status> cache_status;
         for (auto& cache_path : cache_paths) {
             if (cache_path_set.find(cache_path.path) != cache_path_set.end()) {
@@ -316,18 +308,19 @@ void ExecEnv::init_file_cache_factory() {
                 continue;
             }
 
-            olap_res = file_cache_init_pool->submit_func(std::bind(
-                    &io::FileCacheFactory::create_file_cache, _file_cache_factory, cache_path.path,
-                    cache_path.init_settings(), &(cache_status.emplace_back())));
+            file_cache_init_threads.emplace_back([&, status = &cache_status.emplace_back()]() {
+                *status = doris::io::FileCacheFactory::instance()->create_file_cache(
+                        cache_path.path, cache_path.init_settings());
+            });
 
-            if (!olap_res.ok()) {
-                LOG(FATAL) << "failed to init file cache, err: " << olap_res;
-                exit(-1);
-            }
             cache_path_set.emplace(cache_path.path);
         }
 
-        file_cache_init_pool->wait();
+        for (std::thread& thread : file_cache_init_threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
         for (const auto& status : cache_status) {
             if (!status.ok()) {
                 LOG(FATAL) << "failed to init file cache, err: " << status;
@@ -335,7 +328,6 @@ void ExecEnv::init_file_cache_factory() {
             }
         }
     }
-    return;
 }
 
 Status ExecEnv::_init_mem_env() {

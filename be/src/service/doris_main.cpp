@@ -448,45 +448,6 @@ int main(int argc, char** argv) {
     // Or our own sig-handler for SIGINT & SIGTERM will not be chained ...
     // https://www.oracle.com/java/technologies/javase/signals.html
     doris::init_signals();
-    // Load file cache before starting up daemon threads to make sure StorageEngine is read.
-    if (doris::config::enable_file_cache) {
-        std::unordered_set<std::string> cache_path_set;
-        std::vector<doris::CachePath> cache_paths;
-        olap_res = doris::parse_conf_cache_paths(doris::config::file_cache_path, cache_paths);
-        if (!olap_res) {
-            LOG(FATAL) << "parse config file cache path failed, path="
-                       << doris::config::file_cache_path;
-            exit(-1);
-        }
-
-        std::vector<std::thread> file_cache_init_threads;
-        std::list<doris::Status> cache_status;
-        for (auto& cache_path : cache_paths) {
-            if (cache_path_set.find(cache_path.path) != cache_path_set.end()) {
-                LOG(WARNING) << fmt::format("cache path {} is duplicate", cache_path.path);
-                continue;
-            }
-
-            file_cache_init_threads.emplace_back([&, status = &cache_status.emplace_back()]() {
-                *status = doris::io::FileCacheFactory::instance()->create_file_cache(
-                        cache_path.path, cache_path.init_settings());
-            });
-
-            cache_path_set.emplace(cache_path.path);
-        }
-
-        for (std::thread& thread : file_cache_init_threads) {
-            if (thread.joinable()) {
-                thread.join();
-            }
-        }
-        for (const auto& status : cache_status) {
-            if (!status.ok()) {
-                LOG(FATAL) << "failed to init file cache, err: " << status;
-                exit(-1);
-            }
-        }
-    }
 
     // ATTN: MUST init before `ExecEnv`, `StorageEngine` and other daemon services
     //

@@ -14,9 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-// This file is copied from
-// https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/Fileblock.h
-// and modified by Doris
 
 #pragma once
 
@@ -32,28 +29,18 @@
 #include <utility>
 
 #include "common/status.h"
-#include "io/cache/block/block_file_cache_fwd.h"
-#include "io/fs/file_writer.h"
+#include "io/cache/file_cache_utils.h"
+#include "io/cache/file_cache_storage.h"
 #include "util/lock.h"
 #include "util/slice.h"
 
 namespace doris {
 namespace io {
 
-class FileBlock;
-class FileReader;
-class BlockFileCache;
-
-using FileBlockSPtr = std::shared_ptr<FileBlock>;
-using FileBlocks = std::list<FileBlockSPtr>;
-
 class FileBlock {
-    friend class BlockFileCache;
     friend struct FileBlocksHolder;
 
 public:
-    using LocalWriterPtr = std::unique_ptr<FileWriter>;
-    using LocalReaderPtr = std::weak_ptr<FileReader>;
 
     enum class State {
         DOWNLOADED,
@@ -72,7 +59,7 @@ public:
         SKIP_CACHE,
     };
 
-    FileBlock(size_t offset, size_t size, const Key& key, BlockFileCache* cache,
+    FileBlock(size_t offset, size_t size, const Key& key, FileCacheStorage* storage,
               State download_state, FileCacheType cache_type, int64_t expiration_time);
 
     ~FileBlock();
@@ -92,9 +79,9 @@ public:
             return left == other.left && right == other.right;
         }
 
-        size_t size() const { return right - left + 1; }
+        [[nodiscard]] size_t size() const { return right - left + 1; }
 
-        std::string to_string() const {
+        [[nodiscard]] std::string to_string() const {
             return fmt::format("[{}, {}]", std::to_string(left), std::to_string(right));
         }
     };
@@ -107,8 +94,8 @@ public:
 
     State wait();
 
-    // append data to cache file
-    Status append(Slice data);
+    // put data to cache file
+    Status put(Slice data);
 
     // read data from cache file
     Status read_at(Slice buffer, size_t read_offset);
@@ -170,8 +157,7 @@ private:
 
     uint64_t _downloader_id {0};
 
-    LocalWriterPtr _cache_writer;
-    LocalReaderPtr _cache_reader;
+    FileCacheStorage* storage;
 
     size_t _downloaded_size = 0;
 
@@ -191,12 +177,14 @@ private:
     mutable doris::Mutex _download_mutex;
 
     Key _file_key;
-    BlockFileCache* _cache;
 
     std::atomic<bool> _is_downloaded {false};
     FileCacheType _cache_type;
     int64_t _expiration_time {0};
 };
+
+using FileBlockSPtr = std::shared_ptr<FileBlock>;
+using FileBlocks = std::list<FileBlockSPtr>;
 
 struct FileBlocksHolder {
     explicit FileBlocksHolder(FileBlocks&& file_blocks) : file_blocks(std::move(file_blocks)) {}

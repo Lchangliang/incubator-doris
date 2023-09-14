@@ -18,38 +18,38 @@
 // https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/FileCache_fwd.h
 // and modified by Doris
 
-#pragma once
-#include <memory>
+// #pragma once
+// #include <memory>
 
-#include "vec/common/uint128.h"
+// #include "vec/common/uint128.h"
 
-static constexpr size_t GB = 1 * 1024 * 1024 * 1024;
-static constexpr size_t KB = 1024;
-namespace doris {
-namespace io {
+// static constexpr size_t GB = 1 * 1024 * 1024 * 1024;
+// static constexpr size_t KB = 1024;
+// namespace doris {
+// namespace io {
 
-using uint128_t = vectorized::UInt128;
-using UInt128Hash = vectorized::UInt128Hash;
-static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
+// using uint128_t = vectorized::UInt128;
+// using UInt128Hash = vectorized::UInt128Hash;
+// static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
 
-struct FileCacheSettings;
-// default 1 : 17 : 2
-enum FileCacheType {
-    INDEX,
-    NORMAL,
-    DISPOSABLE,
-    TTL,
-};
+// struct FileCacheSettings;
+// // default 1 : 17 : 2
+// enum FileCacheType {
+//     INDEX,
+//     NORMAL,
+//     DISPOSABLE,
+//     TTL,
+// };
 
-struct Key {
-    uint128_t key;
-    std::string to_string() const;
+// struct Key {
+//     uint128_t key;
+//     std::string to_string() const;
 
-    Key() = default;
-    explicit Key(const uint128_t& key_) : key(key_) {}
+//     Key() = default;
+//     explicit Key(const uint128_t& key_) : key(key_) {}
 
-    bool operator==(const Key& other) const { return key == other.key; }
-};
+//     bool operator==(const Key& other) const { return key == other.key; }
+// };
 
 } // namespace io
 } // namespace doris

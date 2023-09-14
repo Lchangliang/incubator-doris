@@ -14,9 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-// This file is copied from
-// https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/Fileblock.cpp
-// and modified by Doris
 
 #include "io/cache/block/file_block.h"
 
