@@ -18,25 +18,25 @@
 #pragma once
 
 #include "io/cache/file_cache_utils.h"
+#include "util/slice.h"
 
 namespace doris::io {
 
-class FileCacheManager;
+class BlockFileCacheManager;
 
 class FileCacheStorage {
 public:
-    FileCacheStorage(FileCacheManager* file_cache_manager)
-            : _file_cache_manager(file_cache_manager) {}
+    FileCacheStorage(BlockFileCacheManager* file_cache_manager) : _mgr(file_cache_manager) {}
     virtual ~FileCacheStorage() = default;
     virtual Status init() = 0;
-    virtual Status put(const Key& key, int64_t offset, const std::string_view& value,
-                       const KeyMeta* = nullptr) = 0;
-    virtual Status get(const std::string_view& file_path, int64_t offset, std::string* value) = 0;
-    virtual Status remove(const std::string_view& file_path, int64_t offset) = 0;
+    virtual Status put(const Key& key, size_t offset, const Slice& value, const KeyMeta&) = 0;
+    virtual Status get(const Key& key, size_t offset, const KeyMeta& key_meta, Slice value,
+                       size_t value_offset) = 0;
+    virtual Status remove(const Key& key, size_t offset) = 0;
     virtual Status change_key_meta(const KeyMeta& meta) = 0;
 
-private:
-    FileCacheManager* _file_cache_manager {nullptr};
+protected:
+    BlockFileCacheManager* _mgr {nullptr};
 };
 
 } // namespace doris::io

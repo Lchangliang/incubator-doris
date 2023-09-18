@@ -15,6 +15,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#pragma once
 
+#include <memory>
 
+#include "io/cache/file_cache_storage.h"
 
+namespace doris::io {
+
+std::string BlockFileCacheManager::cache_type_to_string(FileCacheType type) {
+    switch (type) {
+    case FileCacheType::INDEX:
+        return "_idx";
+    case FileCacheType::DISPOSABLE:
+        return "_disposable";
+    case FileCacheType::NORMAL:
+        return "";
+    case FileCacheType::TTL:
+        return "_ttl";
+    }
+    return "";
+}
+
+} // namespace doris::io
