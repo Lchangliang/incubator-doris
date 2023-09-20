@@ -24,10 +24,13 @@
 namespace doris::io {
 
 class FSFileCacheStorage;
+class FileBlock;
+class FileBlocksHolder;
 
 class BlockFileCacheManager {
     friend class FSFileCacheStorage;
-
+    friend class FileBlock;
+    friend class FileBlocksHolder;
 public:
     /// use version 2 when USE_CACHE_VERSION2 = true, while use version 1 if false
     /// version 1.0: cache_base_path / key / offset
@@ -38,7 +41,8 @@ public:
     static std::string cache_type_to_string(FileCacheType type);
 private:
     std::string _cache_base_path;
-    std::unique_ptr<FileCacheStorage> storage;
+    std::mutex _mutex;
+    std::unique_ptr<FileCacheStorage> _storage;
 };
 
 } // namespace doris::io

@@ -20,6 +20,8 @@
 
 #include "io/cache/file_cache_utils.h"
 
+#include "vec/common/hex.h"
+
 namespace doris::io {
 
 static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
@@ -46,6 +48,10 @@ FileCacheSettings calc_settings(size_t total_size, size_t max_query_cache_size) 
             std::max(settings.query_queue_size / settings.max_file_block_size,
                      REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS);
     return settings;
+}
+
+std::string UInt128Wrapper::to_string() const {
+    return vectorized::get_hex_uint_lowercase(value_);
 }
 
 } // namespace doris::io

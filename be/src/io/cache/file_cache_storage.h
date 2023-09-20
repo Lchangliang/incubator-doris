@@ -26,17 +26,14 @@ class BlockFileCacheManager;
 
 class FileCacheStorage {
 public:
-    FileCacheStorage(BlockFileCacheManager* file_cache_manager) : _mgr(file_cache_manager) {}
+    FileCacheStorage() = default;
     virtual ~FileCacheStorage() = default;
-    virtual Status init() = 0;
-    virtual Status put(const Key& key, size_t offset, const Slice& value, const KeyMeta&) = 0;
-    virtual Status get(const Key& key, size_t offset, const KeyMeta& key_meta, Slice value,
-                       size_t value_offset) = 0;
-    virtual Status remove(const Key& key, size_t offset) = 0;
-    virtual Status change_key_meta(const KeyMeta& meta) = 0;
+    virtual Status init(BlockFileCacheManager* _mgr) = 0;
+    virtual Status put(const FileCacheKey& key, const Slice& value) = 0;
+    virtual Status get(const FileCacheKey& key, size_t value_offset, Slice result) = 0;
+    virtual Status remove(const FileCacheKey& key) = 0;
+    virtual Status change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) = 0;
 
-protected:
-    BlockFileCacheManager* _mgr {nullptr};
 };
 
 } // namespace doris::io

@@ -23,22 +23,23 @@ namespace doris::io {
 
 class FSFileCacheStorage : public FileCacheStorage {
 public:
-    FSFileCacheStorage(BlockFileCacheManager* file_cache_manager)
-            : FileCacheStorage(file_cache_manager) {}
+    FSFileCacheStorage() = default;
     ~FSFileCacheStorage() override = default;
-    Status init() override;
-    Status put(const Key& key, size_t offset, const Slice&, const KeyMeta&) override;
-    Status get(const Key& key, size_t offset, const KeyMeta& key_meta, Slice value, size_t value_offset) override;
-    Status remove(const Key& key, size_t offset) override;
-    Status change_key_meta(const KeyMeta& meta) override;
+    Status init(BlockFileCacheManager* _mgr) override;
+    Status put(const FileCacheKey& key, const Slice& value) override;
+    Status get(const FileCacheKey& key, size_t value_offset, Slice buffer) override;
+    Status remove(const FileCacheKey& key) override;
+    Status change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) override;
 
 private:
     [[nodiscard]] std::string get_path_in_local_cache(const std::string& dir, size_t offset,
                                                       FileCacheType type,
                                                       bool is_tmp = false) const;
 
-    [[nodiscard]] std::string get_path_in_local_cache(const Key& key,
+    [[nodiscard]] std::string get_path_in_local_cache(const UInt128Wrapper& key,
                                                       int64_t expiration_time) const;
+
+    std::string _cache_base_path;
 };
 
 } // namespace doris::io

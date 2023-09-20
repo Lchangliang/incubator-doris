@@ -35,23 +35,30 @@ enum FileCacheType {
     TTL,
 };
 
-struct Key {
-    uint128_t key;
+struct UInt128Wrapper {
+    uint128_t value_;
     [[nodiscard]] std::string to_string() const;
 
-    Key() = default;
-    explicit Key(const uint128_t& key_) : key(key_) {}
+    UInt128Wrapper() = default;
+    explicit UInt128Wrapper(const uint128_t& value) : value_(value) {}
 
-    bool operator==(const Key& other) const { return key == other.key; }
+    bool operator==(const UInt128Wrapper& other) const { return value_ == other.value_; }
 };
 
 struct KeyMeta {
-    FileCacheType file_cache_type;
-    int64_t expiration_time;
+    int64_t expiration_time; // 绝对时间
+    FileCacheType type;
+};
+
+struct FileCacheKey {
+    UInt128Wrapper hash;
+    size_t offset;
+    KeyMeta meta;
 };
 
 // [query:disposable:index:total]
-constexpr std::array<size_t, 4> percentage {17, 2, 1, 20};
+constexpr std::array<size_t, 4>
+        percentage {17, 2, 1, 20};
 static_assert(percentage[0] + percentage[1] + percentage[2] == percentage[3]);
 struct FileCacheSettings {
     size_t total_size {0};

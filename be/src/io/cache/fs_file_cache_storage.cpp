@@ -30,47 +30,48 @@
 
 namespace doris::io {
 
-Status FSFileCacheStorage::init() {
+Status FSFileCacheStorage::init(BlockFileCacheManager* _mgr) {
     return Status::OK();
 }
 
-Status FSFileCacheStorage::put(const Key& key, size_t offset, const Slice& value,
-                               const KeyMeta& key_meta) {
-    std::string dir = get_path_in_local_cache(key, key_meta.expiration_time);
+Status FSFileCacheStorage::put(const FileCacheKey& key, const Slice& value) {
+    std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
     bool exists {false};
     RETURN_IF_ERROR(global_local_filesystem()->exists(dir, &exists));
     if (!exists) {
         RETURN_IF_ERROR(global_local_filesystem()->create_directory(dir, false));
     }
-    std::string tmp_file = get_path_in_local_cache(dir, offset, key_meta.file_cache_type, true);
+    std::string tmp_file = get_path_in_local_cache(dir, key.offset, key.meta.type, true);
     FileWriterPtr file_writer;
     RETURN_IF_ERROR(global_local_filesystem()->create_file(tmp_file, &file_writer));
     RETURN_IF_ERROR(file_writer->append(value));
     RETURN_IF_ERROR(file_writer->close());
-    std::string true_file = get_path_in_local_cache(dir, offset, key_meta.file_cache_type, false);
+    std::string true_file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
     RETURN_IF_ERROR(global_local_filesystem()->rename(tmp_file, true_file));
     return Status::OK();
 }
 
-Status FSFileCacheStorage::get(const Key& key, size_t offset, const KeyMeta& key_meta, Slice value,
-                               size_t value_offset) {
-    std::string true_file =
-            get_path_in_local_cache(get_path_in_local_cache(key, key_meta.expiration_time), offset,
-                                    key_meta.file_cache_type, false);
+Status FSFileCacheStorage::get(const FileCacheKey& key, size_t value_offset, Slice buffer) {
+    std::string file =
+            get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
+                                    key.offset, key.meta.type, false);
     FileReaderSPtr file_reader;
-    RETURN_IF_ERROR(global_local_filesystem()->open_file(true_file, &file_reader));
+    RETURN_IF_ERROR(global_local_filesystem()->open_file(file, &file_reader));
     size_t bytes_read = 0;
-    RETURN_IF_ERROR(file_reader->read_at(value_offset, value, &bytes_read));
-    DCHECK(bytes_read == value.get_size());
+    RETURN_IF_ERROR(file_reader->read_at(value_offset, buffer, &bytes_read));
+    DCHECK(bytes_read == buffer.get_size());
     return Status::OK();
 }
 
-Status FSFileCacheStorage::remove(const Key& key, size_t offset) {
-    
+Status FSFileCacheStorage::remove(const FileCacheKey& key) {
+    std::string file =
+            get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
+                                    key.offset, key.meta.type, false);
+    RETURN_IF_ERROR(global_local_filesystem()->delete_file(file));
     return Status::OK();
 }
 
-Status FSFileCacheStorage::change_key_meta(const KeyMeta& meta) {
+Status FSFileCacheStorage::change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) {
     return Status::OK();
 }
 
@@ -80,16 +81,15 @@ std::string FSFileCacheStorage::get_path_in_local_cache(const std::string& dir, 
                   (is_tmp ? "_tmp" : BlockFileCacheManager::cache_type_to_string(type)));
 }
 
-std::string FSFileCacheStorage::get_path_in_local_cache(const Key& key,
+std::string FSFileCacheStorage::get_path_in_local_cache(const UInt128Wrapper& value,
                                                         int64_t expiration_time) const {
-    auto key_str = key.to_string();
+    auto str = value.to_string();
     try {
         if constexpr (BlockFileCacheManager::USE_CACHE_VERSION2) {
-            return _mgr->_cache_base_path +
-                   key_str.substr(0, BlockFileCacheManager::KEY_PREFIX_LENGTH) +
-                   (key_str + "_" + std::to_string(expiration_time));
+            return _cache_base_path + str.substr(0, BlockFileCacheManager::KEY_PREFIX_LENGTH) +
+                   (str + "_" + std::to_string(expiration_time));
         } else {
-            return _mgr->_cache_base_path + (key_str + "_" + std::to_string(expiration_time));
+            return _cache_base_path + (str + "_" + std::to_string(expiration_time));
         }
     } catch (std::filesystem::filesystem_error& e) {
         LOG(WARNING) << "fail to get_path_in_local_cache=" << e.what();

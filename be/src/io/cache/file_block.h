@@ -29,19 +29,20 @@
 #include <utility>
 
 #include "common/status.h"
+#include "io/cache/block_file_cache_manager.h"
 #include "io/cache/file_cache_utils.h"
-#include "io/cache/file_cache_storage.h"
 #include "util/lock.h"
 #include "util/slice.h"
 
 namespace doris {
 namespace io {
 
+struct FileBlocksHolder;
+
 class FileBlock {
     friend struct FileBlocksHolder;
 
 public:
-
     enum class State {
         DOWNLOADED,
         /**
@@ -59,10 +60,10 @@ public:
         SKIP_CACHE,
     };
 
-    FileBlock(size_t offset, size_t size, const Key& key, FileCacheStorage* storage,
-              State download_state, FileCacheType cache_type, int64_t expiration_time);
+    FileBlock(const FileCacheKey& key, size_t size, BlockFileCacheManager* mgr,
+              State download_state);
 
-    ~FileBlock();
+    ~FileBlock() = default;
 
     State state() const;
 
@@ -88,7 +89,7 @@ public:
 
     const Range& range() const { return _block_range; }
 
-    const Key& key() const { return _file_key; }
+    const UInt128Wrapper& get_hash_value() const { return _key.hash; }
 
     size_t offset() const { return range().left; }
 
@@ -112,27 +113,21 @@ public:
 
     bool is_downloader() const;
 
-    bool is_downloaded() const { return _is_downloaded.load(); }
-
-    FileCacheType cache_type() const { return _cache_type; }
+    FileCacheType cache_type() const { return _key.meta.type; }
 
     static uint64_t get_caller_id();
 
-    size_t get_download_offset() const;
-
-    size_t get_downloaded_size() const;
-
     std::string get_info_for_log() const;
 
-    std::string get_path_in_local_cache(bool is_tmp = false) const;
-
-    bool change_cache_type(FileCacheType new_type);
+    Status change_cache_type_by_mgr(FileCacheType new_type);
 
     void change_cache_type_self(FileCacheType new_type);
 
-    void update_expiration_time(int64_t expiration_time) { _expiration_time = expiration_time; }
+    void update_expiration_time(int64_t expiration_time) {
+        _key.meta.expiration_time = expiration_time;
+    }
 
-    int64_t expiration_time() const { return _expiration_time; }
+    int64_t expiration_time() const { return _key.meta.expiration_time; }
 
     State state_unlock(std::lock_guard<doris::Mutex>&) const;
 
@@ -140,7 +135,6 @@ public:
     FileBlock(const FileBlock&) = delete;
 
 private:
-    size_t get_downloaded_size(std::lock_guard<doris::Mutex>& block_lock) const;
     std::string get_info_for_log_impl(std::lock_guard<doris::Mutex>& block_lock) const;
     bool has_finalized_state() const;
 
@@ -157,48 +151,27 @@ private:
 
     uint64_t _downloader_id {0};
 
-    FileCacheStorage* storage;
-
-    size_t _downloaded_size = 0;
+    BlockFileCacheManager* _mgr;
 
     /// global locking order rule:
     /// 1. cache lock
     /// 2. block lock
-
     mutable doris::Mutex _mutex;
     doris::ConditionVariable _cv;
-
-    /// Protects downloaded_size access with actual write into fs.
-    /// downloaded_size is not protected by download_mutex in methods which
-    /// can never be run in parallel to FileBlock::write() method
-    /// as downloaded_size is updated only in FileBlock::write() method.
-    /// Such methods are identified by isDownloader() check at their start,
-    /// e.g. they are executed strictly by the same thread, sequentially.
-    mutable doris::Mutex _download_mutex;
-
-    Key _file_key;
-
-    std::atomic<bool> _is_downloaded {false};
-    FileCacheType _cache_type;
-    int64_t _expiration_time {0};
+    FileCacheKey _key;
 };
 
 using FileBlockSPtr = std::shared_ptr<FileBlock>;
 using FileBlocks = std::list<FileBlockSPtr>;
 
 struct FileBlocksHolder {
-    explicit FileBlocksHolder(FileBlocks&& file_blocks) : file_blocks(std::move(file_blocks)) {}
-
-    FileBlocksHolder(FileBlocksHolder&& other) noexcept
-            : file_blocks(std::move(other.file_blocks)) {}
+    explicit FileBlocksHolder(FileBlocks file_blocks) : file_blocks(std::move(file_blocks)) {}
 
     FileBlocksHolder& operator=(const FileBlocksHolder&) = delete;
     FileBlocksHolder(const FileBlocksHolder&) = delete;
-
     ~FileBlocksHolder();
 
     FileBlocks file_blocks;
-
     std::string to_string();
 };
 
