@@ -24,8 +24,6 @@
 
 namespace doris::io {
 
-static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
-
 FileCacheSettings calc_settings(size_t total_size, size_t max_query_cache_size) {
     FileCacheSettings settings;
     settings.total_size = total_size;

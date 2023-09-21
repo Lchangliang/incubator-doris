@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "io/cache/block/cached_remote_file_reader.h"
+#include "io/cache/cached_remote_file_reader.h"
 
 #include <fmt/format.h>
 #include <gen_cpp/Types_types.h>
@@ -29,9 +29,9 @@
 // IWYU pragma: no_include <opentelemetry/common/threadlocal.h>
 #include "common/compiler_util.h" // IWYU pragma: keep
 #include "common/config.h"
-#include "io/cache/block/block_file_cache.h"
-#include "io/cache/block/block_file_cache_factory.h"
-#include "io/cache/block/file_block.h"
+#include "io/cache/block_file_cache_factory.h"
+#include "io/cache/block_file_cache_manager.h"
+#include "io/cache/file_block.h"
 #include "io/fs/file_reader.h"
 #include "io/io_common.h"
 #include "util/bit_util.h"
@@ -46,22 +46,22 @@ CachedRemoteFileReader::CachedRemoteFileReader(FileReaderSPtr remote_file_reader
         : _remote_file_reader(std::move(remote_file_reader)) {
     _is_doris_table = opts.is_doris_table;
     if (_is_doris_table) {
-        _cache_key = BlockFileCache::hash(path().filename().native());
-        _cache = FileCacheFactory::instance()->get_by_path(_cache_key);
+        _cache_hash = BlockFileCacheManager::hash(path().filename().native());
+        _cache = FileCacheFactory::instance()->get_by_path(_cache_hash);
     } else {
         // Use path and modification time to build cache key
         std::string unique_path = fmt::format("{}:{}", path().native(), opts.mtime);
-        _cache_key = BlockFileCache::hash(unique_path);
+        _cache_hash = BlockFileCacheManager::hash(unique_path);
         if (opts.cache_base_path.empty()) {
             // if cache path is not specified by session variable, chose randomly.
-            _cache = FileCacheFactory::instance()->get_by_path(_cache_key);
+            _cache = FileCacheFactory::instance()->get_by_path(_cache_hash);
         } else {
             // from query session variable: file_cache_base_path
             _cache = FileCacheFactory::instance()->get_by_path(opts.cache_base_path);
             if (_cache == nullptr) {
                 LOG(WARNING) << "Can't get cache from base path: " << opts.cache_base_path
                              << ", using random instead.";
-                _cache = FileCacheFactory::instance()->get_by_path(_cache_key);
+                _cache = FileCacheFactory::instance()->get_by_path(_cache_hash);
             }
         }
     }
@@ -90,14 +90,13 @@ std::pair<size_t, size_t> CachedRemoteFileReader::_align_size(size_t offset,
     return std::make_pair(align_left, align_size);
 }
 
-Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, size_t* bytes_read,
-                                                const IOContext* io_ctx) {
-    size_t bytes_req = result.size;
-    bytes_req = std::min(bytes_req, size() - offset);
+Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req, Slice result,
+                                                size_t* bytes_read, const IOContext* io_ctx) {
     ReadStatistics stats;
     auto [align_left, align_size] = _align_size(offset, bytes_req);
     CacheContext cache_context(io_ctx);
-    FileBlocksHolder holder = _cache->get_or_set(_cache_key, align_left, align_size, cache_context);
+    FileBlocksHolder holder =
+            _cache->get_or_set(_cache_hash, align_left, align_size, cache_context);
     std::vector<FileBlockSPtr> empty_blocks;
     for (auto& block : holder.file_blocks) {
         switch (block->state()) {
@@ -140,12 +139,11 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
             SCOPED_RAW_TIMER(&stats.local_write_timer);
             char* cur_ptr = buffer.get() + block->range().left - empty_start;
             size_t block_size = block->range().size();
-            RETURN_IF_ERROR(block->append(Slice(cur_ptr, block_size)));
-            RETURN_IF_ERROR(block->finalize_write());
+            RETURN_IF_ERROR(block->put(Slice(cur_ptr, block_size)));
             stats.bytes_write_into_file_cache += block_size;
         }
         // copy from memory directly
-        size_t right_offset = offset + result.size - 1;
+        size_t right_offset = offset + bytes_req - 1;
         if (empty_start <= right_offset && empty_end >= offset) {
             size_t copy_left_offset = offset < empty_start ? empty_start : offset;
             size_t copy_right_offset = right_offset < empty_end ? right_offset : empty_end;
@@ -184,26 +182,36 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, Slice result, siz
                     SCOPED_RAW_TIMER(&stats.remote_read_timer);
                     block_state = block->wait();
                 }
-                if (block_state == FileBlock::State::DOWNLOADED) {
-                    break;
-                }
                 if (block_state != FileBlock::State::DOWNLOADING) {
-                    return Status::IOError(
-                            "File Cache State is {}, the cache downloader encounters an error, "
-                            "please "
-                            "retry it",
-                            block_state);
+                    break;
                 }
             } while (++wait_time < MAX_WAIT_TIME);
         }
-        if (UNLIKELY(wait_time) == MAX_WAIT_TIME) {
+        if (wait_time == MAX_WAIT_TIME) [[unlikely]] {
             return Status::IOError("Waiting too long for the download to complete");
         }
-        size_t file_offset = current_offset - left;
         {
-            SCOPED_RAW_TIMER(&stats.local_read_timer);
-            RETURN_IF_ERROR(block->read_at(
-                    Slice(result.data + (current_offset - offset), read_size), file_offset));
+            Status st;
+            /*
+             * If block_state == EMPTY, the thread reads the data from remote.
+             * If block_state == DOWNLOADED, when the cache file is deleted by the other process,
+             * the thread reads the data from remote too.
+             */
+            if (block_state == FileBlock::State::DOWNLOADED) {
+                size_t file_offset = current_offset - left;
+                SCOPED_RAW_TIMER(&stats.local_read_timer);
+                st = block->read_at(Slice(result.data + (current_offset - offset), read_size),
+                                    file_offset);
+            }
+            if (!st || block_state == FileBlock::State::EMPTY) {
+                size_t bytes_read {0};
+                stats.hit_cache = false;
+                SCOPED_RAW_TIMER(&stats.remote_read_timer);
+                RETURN_IF_ERROR(_remote_file_reader->read_at(
+                        current_offset, Slice(result.data + (current_offset - offset), read_size),
+                        &bytes_read));
+                DCHECK(bytes_read == read_size);
+            }
         }
         *bytes_read += read_size;
         current_offset = right + 1;
@@ -229,8 +237,8 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
         *bytes_read = 0;
         return Status::OK();
     }
-    Status cache_st = _read_from_cache(offset, result, bytes_read, io_ctx);
-    if (UNLIKELY(!cache_st.ok())) {
+    Status cache_st = _read_from_cache(offset, bytes_req, result, bytes_read, io_ctx);
+    if (!cache_st.ok()) [[unlikely]] {
         if (config::file_cache_wait_sec_after_fail > 0) {
             // only for debug, wait and retry to load data from file cache
             // return error if failed again
@@ -238,7 +246,7 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
                          << config::file_cache_wait_sec_after_fail
                          << " seconds to reload data: " << cache_st.to_string();
             sleep(config::file_cache_wait_sec_after_fail);
-            cache_st = _read_from_cache(offset, result, bytes_read, io_ctx);
+            cache_st = _read_from_cache(offset, bytes_req, result, bytes_read, io_ctx);
         } else {
             // fail over to remote file reader, and return the status of remote read
             LOG(WARNING) << "Failed to read data from file cache, and fail over to remote file: "

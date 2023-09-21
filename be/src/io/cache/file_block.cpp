@@ -25,6 +25,7 @@
 #include <thread>
 
 #include "common/status.h"
+#include "io/cache/block_file_cache_manager.h"
 
 namespace doris {
 namespace io {
@@ -111,7 +112,7 @@ Status FileBlock::put(Slice data) {
         _block_range.right = _block_range.left + data.size - 1;
         size_t new_size = _block_range.size();
         DCHECK(new_size < old_size);
-        _mgr->reset_range(_key, _block_range.left, old_size, new_size, cache_lock);
+        _mgr->reset_range(_key.hash, _block_range.left, old_size, new_size, cache_lock);
     }
     std::lock_guard block_lock(_mutex);
     _download_state = State::DOWNLOADED;
@@ -139,18 +140,29 @@ Status FileBlock::change_cache_type_by_mgr(FileCacheType new_type) {
     return Status::OK();
 }
 
-void FileBlock::change_cache_type_self(FileCacheType new_type) {
+Status FileBlock::change_cache_type_self(FileCacheType new_type) {
     std::lock_guard cache_lock(_mgr->_mutex);
     std::lock_guard block_lock(_mutex);
     if (_key.meta.type == FileCacheType::TTL || new_type == _key.meta.type) {
-        return;
+        return Status::OK();
     }
     KeyMeta new_meta;
     new_meta.expiration_time = _key.meta.expiration_time;
     new_meta.type = new_type;
     RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
     _key.meta.type = new_type;
-    _mgr->change_cache_type(_key, _block_range.left, new_type, cache_lock);
+    _mgr->change_cache_type(_key.hash, _block_range.left, new_type, cache_lock);
+    return Status::OK();
+}
+
+Status FileBlock::update_expiration_time(int64_t expiration_time) {
+    std::lock_guard block_lock(_mutex);
+    KeyMeta new_meta;
+    new_meta.expiration_time = expiration_time;
+    new_meta.type = _key.meta.type;
+    RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
+    _key.meta.expiration_time = expiration_time;
+    return Status::OK();
 }
 
 FileBlock::State FileBlock::wait() {

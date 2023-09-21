@@ -25,8 +25,9 @@
 #include <vector>
 
 #include "common/status.h"
-#include "io/cache/block/block_file_cache.h"
-#include "io/cache/block/block_file_cache_settings.h"
+#include "io/cache/file_cache_utils.h"
+#include "io/cache/block_file_cache_manager.h"
+#include "io/cache/file_cache_utils.h"
 namespace doris {
 class TUniqueId;
 
@@ -50,21 +51,21 @@ public:
 
     void set_read_only();
 
-    size_t get_total_cache_size() const { return _total_cache_size; }
+    [[nodiscard]] size_t get_total_cache_size() const { return _total_cache_size; }
 
-    size_t get_cache_instance_size() const { return _caches.size(); }
+    [[nodiscard]] size_t get_cache_instance_size() const { return _caches.size(); }
 
-    BlockFileCachePtr get_by_path(const Key& key);
-    BlockFileCachePtr get_by_path(const std::string& cache_base_path);
-    std::vector<BlockFileCache::QueryFileCacheContextHolderPtr> get_query_context_holders(
+    BlockFileCacheManagerPtr get_by_path(const UInt128Wrapper& hash);
+    BlockFileCacheManagerPtr get_by_path(const std::string& cache_base_path);
+    std::vector<BlockFileCacheManager::QueryFileCacheContextHolderPtr> get_query_context_holders(
             const TUniqueId& query_id);
     FileCacheFactory() = default;
     FileCacheFactory& operator=(const FileCacheFactory&) = delete;
     FileCacheFactory(const FileCacheFactory&) = delete;
 
 private:
-    std::vector<std::unique_ptr<BlockFileCache>> _caches;
-    std::unordered_map<std::string, BlockFileCachePtr> _path_to_cache;
+    std::vector<std::unique_ptr<BlockFileCacheManager>> _caches;
+    std::unordered_map<std::string, BlockFileCacheManagerPtr> _path_to_cache;
     size_t _total_cache_size = 0;
 };
 

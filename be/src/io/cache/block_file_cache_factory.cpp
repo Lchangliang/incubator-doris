@@ -18,8 +18,9 @@
 // https://github.com/ClickHouse/ClickHouse/blob/master/src/Interpreters/Cache/FileCacheFactory.cpp
 // and modified by Doris
 
-#include "io/cache/block/block_file_cache_factory.h"
+#include "io/cache/block_file_cache_factory.h"
 
+#include <gen_cpp/internal_service.pb.h>
 #include <glog/logging.h>
 #include <sys/statfs.h>
 
@@ -28,8 +29,7 @@
 #include <utility>
 
 #include "common/config.h"
-#include "io/cache/block/block_file_cache.h"
-#include "io/cache/block/block_file_cache_settings.h"
+#include "io/cache/file_cache_utils.h"
 #include "io/fs/local_file_system.h"
 #include "runtime/exec_env.h"
 
@@ -60,14 +60,14 @@ size_t FileCacheFactory::try_release(const std::string& base_path) {
 
 Status FileCacheFactory::create_file_cache(const std::string& cache_base_path,
                                            FileCacheSettings file_cache_settings) {
-    auto fs = global_local_filesystem();
-    bool res = false;
-    RETURN_IF_ERROR(fs->exists(cache_base_path, &res));
-    if (!res) {
-        fs->create_directory(cache_base_path);
+    const auto& fs = global_local_filesystem();
+    bool exists = false;
+    RETURN_IF_ERROR(fs->exists(cache_base_path, &exists));
+    if (!exists) {
+        RETURN_IF_ERROR(fs->create_directory(cache_base_path));
     } else if (config::clear_file_cache) {
-        fs->delete_directory(cache_base_path);
-        fs->create_directory(cache_base_path);
+        RETURN_IF_ERROR(fs->delete_directory(cache_base_path));
+        RETURN_IF_ERROR(fs->create_directory(cache_base_path));
     }
 
     struct statfs stat;
@@ -80,8 +80,7 @@ Status FileCacheFactory::create_file_cache(const std::string& cache_base_path,
         file_cache_settings =
                 calc_settings(disk_total_size * 0.9, file_cache_settings.max_query_cache_size);
     }
-    auto cache = std::make_unique<BlockFileCache>(cache_base_path, file_cache_settings);
-
+    auto cache = std::make_unique<BlockFileCacheManager>(cache_base_path, file_cache_settings);
     RETURN_IF_ERROR(cache->initialize());
     _path_to_cache[cache_base_path] = cache.get();
     _caches.push_back(std::move(cache));
@@ -92,11 +91,11 @@ Status FileCacheFactory::create_file_cache(const std::string& cache_base_path,
     return Status::OK();
 }
 
-BlockFileCachePtr FileCacheFactory::get_by_path(const Key& key) {
+BlockFileCacheManagerPtr FileCacheFactory::get_by_path(const UInt128Wrapper& key) {
     return _caches[KeyHash()(key) % _caches.size()].get();
 }
 
-BlockFileCachePtr FileCacheFactory::get_by_path(const std::string& cache_base_path) {
+BlockFileCacheManagerPtr FileCacheFactory::get_by_path(const std::string& cache_base_path) {
     auto iter = _path_to_cache.find(cache_base_path);
     if (iter == _path_to_cache.end()) {
         return nullptr;
@@ -105,9 +104,9 @@ BlockFileCachePtr FileCacheFactory::get_by_path(const std::string& cache_base_pa
     }
 }
 
-std::vector<BlockFileCache::QueryFileCacheContextHolderPtr>
+std::vector<BlockFileCacheManager::QueryFileCacheContextHolderPtr>
 FileCacheFactory::get_query_context_holders(const TUniqueId& query_id) {
-    std::vector<BlockFileCache::QueryFileCacheContextHolderPtr> holders;
+    std::vector<BlockFileCacheManager::QueryFileCacheContextHolderPtr> holders;
     for (const auto& cache : _caches) {
         holders.push_back(cache->get_query_context_holder(query_id));
     }

@@ -25,7 +25,8 @@
 #include <utility>
 
 #include "common/status.h"
-#include "io/cache/block/block_file_cache.h"
+#include "io/cache/block_file_cache_manager.h"
+#include "io/cache/file_cache_utils.h"
 #include "io/fs/file_reader.h"
 #include "io/fs/file_system.h"
 #include "io/fs/path.h"
@@ -59,11 +60,11 @@ protected:
                         const IOContext* io_ctx) override;
 
 private:
-    std::pair<size_t, size_t> _align_size(size_t offset, size_t size) const;
+    [[nodiscard]] std::pair<size_t, size_t> _align_size(size_t offset, size_t size) const;
 
     FileReaderSPtr _remote_file_reader;
-    Key _cache_key;
-    BlockFileCachePtr _cache;
+    UInt128Wrapper _cache_hash;
+    BlockFileCacheManagerPtr _cache;
     bool _is_doris_table;
 
     struct ReadStatistics {
@@ -77,7 +78,7 @@ private:
     };
     void _update_state(const ReadStatistics& stats, FileCacheStatistics* state) const;
 
-    Status _read_from_cache(size_t offset, Slice result, size_t* bytes_read,
+    Status _read_from_cache(size_t offset, size_t byte_req, Slice result, size_t* bytes_read,
                             const IOContext* io_ctx);
 };
 

@@ -24,6 +24,8 @@
 
 namespace doris::io {
 
+inline static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
+
 using uint128_t = vectorized::UInt128;
 using UInt128Hash = vectorized::UInt128Hash;
 
@@ -45,6 +47,17 @@ struct UInt128Wrapper {
     bool operator==(const UInt128Wrapper& other) const { return value_ == other.value_; }
 };
 
+struct KeyHash {
+    std::size_t operator()(const UInt128Wrapper& w) const { return UInt128Hash()(w.value_); }
+};
+
+using AccessKeyAndOffset = std::pair<UInt128Wrapper, size_t>;
+struct KeyAndOffsetHash {
+    std::size_t operator()(const AccessKeyAndOffset& key) const {
+        return UInt128Hash()(key.first.value_) ^ std::hash<uint64_t>()(key.second);
+    }
+};
+
 struct KeyMeta {
     int64_t expiration_time; // 绝对时间
     FileCacheType type;
@@ -57,8 +70,7 @@ struct FileCacheKey {
 };
 
 // [query:disposable:index:total]
-constexpr std::array<size_t, 4>
-        percentage {17, 2, 1, 20};
+constexpr std::array<size_t, 4> percentage {17, 2, 1, 20};
 static_assert(percentage[0] + percentage[1] + percentage[2] == percentage[3]);
 struct FileCacheSettings {
     size_t total_size {0};

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "io/cache/file_cache_utils.h"
+#include "util/lock.h"
 #include "util/slice.h"
 
 namespace doris::io {
@@ -33,7 +34,9 @@ public:
     virtual Status get(const FileCacheKey& key, size_t value_offset, Slice result) = 0;
     virtual Status remove(const FileCacheKey& key) = 0;
     virtual Status change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) = 0;
-
+    // use when lazy load cache
+    virtual void load_blocks_directly_unlocked(BlockFileCacheManager* _mgr, const FileCacheKey& key,
+                                      std::lock_guard<doris::Mutex>& cache_lock) {}
 };
 
 } // namespace doris::io

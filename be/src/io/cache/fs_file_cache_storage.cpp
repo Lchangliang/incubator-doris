@@ -15,22 +15,74 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#pragma once
-
 #include "io/cache/fs_file_cache_storage.h"
 
+#include <filesystem>
 #include <system_error>
 
+#include "common/logging.h"
 #include "io/cache/block_file_cache_manager.h"
+#include "io/cache/file_block.h"
+#include "io/cache/file_cache_utils.h"
 #include "io/fs/file_reader_writer_fwd.h"
 #include "io/fs/file_writer.h"
 #include "io/fs/local_file_reader.h"
 #include "io/fs/local_file_system.h"
 #include "io/fs/local_file_writer.h"
+#include "vec/common/hex.h"
 
 namespace doris::io {
 
+std::shared_ptr<FileReader> FDCache::get_file_reader(const AccessKeyAndOffset& key) {
+    std::shared_lock rlock(_mtx);
+    if (auto iter = _file_name_to_reader.find(key); iter != _file_name_to_reader.end()) {
+        return iter->second->second;
+    }
+    return nullptr;
+}
+
+void FDCache::insert_file_reader(const AccessKeyAndOffset& key,
+                                 std::shared_ptr<FileReader> file_reader) {
+    std::lock_guard wlock(_mtx);
+    if (_read_only) {
+        return;
+    }
+    if (auto iter = _file_name_to_reader.find(key); iter == _file_name_to_reader.end()) {
+        if (config::file_cache_max_file_reader_cache_size == _file_reader_list.size()) {
+            _file_name_to_reader.erase(_file_reader_list.back().first);
+            _file_reader_list.pop_back();
+        }
+        _file_reader_list.emplace_front(key, std::move(file_reader));
+        _file_name_to_reader.insert(std::make_pair(key, _file_reader_list.begin()));
+    }
+}
+
+void FDCache::remove_file_reader(const AccessKeyAndOffset& key) {
+    std::lock_guard wlock(_mtx);
+    if (auto iter = _file_name_to_reader.find(key); iter != _file_name_to_reader.end()) {
+        _file_reader_list.erase(iter->second);
+        _file_name_to_reader.erase(key);
+    }
+}
+
+bool FDCache::contains_file_reader(const AccessKeyAndOffset& key) {
+    std::shared_lock rlock(_mtx);
+    return _file_name_to_reader.contains(key);
+}
+
+size_t FDCache::file_reader_cache_size() {
+    std::shared_lock rlock(_mtx);
+    return _file_reader_list.size();
+}
+
 Status FSFileCacheStorage::init(BlockFileCacheManager* _mgr) {
+    _cache_base_path = _mgr->_cache_base_path;
+    RETURN_IF_ERROR(rebuild_data_structure());
+    _cache_background_load_thread = std::thread([&]() {
+        load_cache_info_into_memory(_mgr);
+        _mgr->_lazy_open_done = true;
+        LOG_INFO("FileCache {} lazy load done.", _cache_base_path);
+    });
     return Status::OK();
 }
 
@@ -52,11 +104,14 @@ Status FSFileCacheStorage::put(const FileCacheKey& key, const Slice& value) {
 }
 
 Status FSFileCacheStorage::get(const FileCacheKey& key, size_t value_offset, Slice buffer) {
-    std::string file =
-            get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
-                                    key.offset, key.meta.type, false);
-    FileReaderSPtr file_reader;
-    RETURN_IF_ERROR(global_local_filesystem()->open_file(file, &file_reader));
+    FileReaderSPtr file_reader =
+            FDCache::instance()->get_file_reader(std::make_pair(key.hash, key.offset));
+    if (!file_reader) {
+        std::string file =
+                get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
+                                        key.offset, key.meta.type, false);
+        RETURN_IF_ERROR(global_local_filesystem()->open_file(file, &file_reader));
+    }
     size_t bytes_read = 0;
     RETURN_IF_ERROR(file_reader->read_at(value_offset, buffer, &bytes_read));
     DCHECK(bytes_read == buffer.get_size());
@@ -64,36 +119,405 @@ Status FSFileCacheStorage::get(const FileCacheKey& key, size_t value_offset, Sli
 }
 
 Status FSFileCacheStorage::remove(const FileCacheKey& key) {
-    std::string file =
-            get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
-                                    key.offset, key.meta.type, false);
+    std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+    std::string file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
     RETURN_IF_ERROR(global_local_filesystem()->delete_file(file));
+    std::error_code ec;
+    bool is_empty_dir = std::filesystem::is_empty(dir, ec);
+    if (ec) {
+        return Status::InternalError("check dir {} is empty failed: {}", dir, ec.message());
+    }
+    if (is_empty_dir) {
+        RETURN_IF_ERROR(global_local_filesystem()->delete_directory(dir));
+    }
+    FDCache::instance()->remove_file_reader(std::make_pair(key.hash, key.offset));
     return Status::OK();
 }
 
 Status FSFileCacheStorage::change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) {
+    // TTL change
+    if (key.meta.expiration_time != new_meta.expiration_time) {
+        std::string original_dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+        std::string new_dir = get_path_in_local_cache(key.hash, new_meta.expiration_time);
+        // It will be concurrent, but we don't care who rename
+        global_local_filesystem()->rename(original_dir, new_dir);
+        if (key.meta.type != new_meta.type) {
+            std::string original_file =
+                    get_path_in_local_cache(new_dir, key.offset, key.meta.type, false);
+            std::string new_file =
+                    get_path_in_local_cache(new_dir, key.offset, new_meta.type, false);
+            RETURN_IF_ERROR(global_local_filesystem()->rename(original_file, new_file));
+        }
+    } else {
+        std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+        std::string original_file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
+        std::string new_file = get_path_in_local_cache(dir, key.offset, new_meta.type, false);
+        RETURN_IF_ERROR(global_local_filesystem()->rename(original_file, new_file));
+    }
     return Status::OK();
 }
 
 std::string FSFileCacheStorage::get_path_in_local_cache(const std::string& dir, size_t offset,
                                                         FileCacheType type, bool is_tmp) const {
-    return dir + (std::to_string(offset) +
-                  (is_tmp ? "_tmp" : BlockFileCacheManager::cache_type_to_string(type)));
+    return Path(dir) / (std::to_string(offset) +
+                        (is_tmp ? "_tmp" : BlockFileCacheManager::cache_type_to_string(type)));
 }
 
 std::string FSFileCacheStorage::get_path_in_local_cache(const UInt128Wrapper& value,
                                                         int64_t expiration_time) const {
     auto str = value.to_string();
     try {
-        if constexpr (BlockFileCacheManager::USE_CACHE_VERSION2) {
-            return _cache_base_path + str.substr(0, BlockFileCacheManager::KEY_PREFIX_LENGTH) +
+        if constexpr (USE_CACHE_VERSION2) {
+            return Path(_cache_base_path) / str.substr(0, KEY_PREFIX_LENGTH) /
                    (str + "_" + std::to_string(expiration_time));
         } else {
-            return _cache_base_path + (str + "_" + std::to_string(expiration_time));
+            return Path(_cache_base_path) / (str + "_" + std::to_string(expiration_time));
         }
     } catch (std::filesystem::filesystem_error& e) {
         LOG(WARNING) << "fail to get_path_in_local_cache=" << e.what();
         return "";
+    }
+}
+
+Status FSFileCacheStorage::rebuild_data_structure() const {
+    /// version 1.0: cache_base_path / key / offset
+    /// version 2.0: cache_base_path / key_prefix / key / offset
+    std::string version;
+    RETURN_IF_ERROR(read_file_cache_version(&version));
+    const FileSystemSPtr& fs = global_local_filesystem();
+    if (USE_CACHE_VERSION2 && version != "2.0") {
+        // move directories format as version 2.0
+        std::error_code ec;
+        std::filesystem::directory_iterator key_it {_cache_base_path, ec};
+        if (ec) {
+            return Status::InternalError("Failed to list dir {}: {}", _cache_base_path,
+                                         ec.message());
+        }
+        for (; key_it != std::filesystem::directory_iterator(); ++key_it) {
+            if (key_it->is_directory()) {
+                std::string cache_key = key_it->path().filename().native();
+                if (cache_key.size() > KEY_PREFIX_LENGTH) {
+                    std::string key_prefix =
+                            Path(_cache_base_path) / cache_key.substr(0, KEY_PREFIX_LENGTH);
+                    bool exists = false;
+                    RETURN_IF_ERROR(fs->exists(key_prefix, &exists));
+                    if (!exists) {
+                        RETURN_IF_ERROR(fs->create_directory(key_prefix));
+                    }
+                    RETURN_IF_ERROR(fs->rename_dir(key_it->path(), key_prefix / cache_key));
+                }
+            }
+        }
+        if (!write_file_cache_version().ok()) {
+            return Status::InternalError("Failed to write version hints for file cache");
+        }
+    }
+
+    auto rebuild_dir = [&](std::filesystem::directory_iterator& upgrade_key_it) -> Status {
+        for (; upgrade_key_it != std::filesystem::directory_iterator(); ++upgrade_key_it) {
+            if (upgrade_key_it->path().filename().native().find('_') == std::string::npos) {
+                RETURN_IF_ERROR(
+                        fs->rename(upgrade_key_it->path(), upgrade_key_it->path().native() + "_0"));
+            }
+        }
+        return Status::OK();
+    };
+    std::error_code ec;
+    if constexpr (USE_CACHE_VERSION2) {
+        std::filesystem::directory_iterator key_prefix_it {_cache_base_path, ec};
+        if (ec) [[unlikely]] {
+            LOG(WARNING) << ec.message();
+            return Status::IOError(ec.message());
+        }
+        for (; key_prefix_it != std::filesystem::directory_iterator(); ++key_prefix_it) {
+            if (!key_prefix_it->is_directory()) {
+                // maybe version hits file
+                continue;
+            }
+            if (key_prefix_it->path().filename().native().size() != KEY_PREFIX_LENGTH) {
+                LOG(WARNING) << "Unknown directory " << key_prefix_it->path().native()
+                             << ", try to remove it";
+                RETURN_IF_ERROR(fs->delete_directory(key_prefix_it->path()));
+            }
+            std::filesystem::directory_iterator key_it {key_prefix_it->path(), ec};
+            if (ec) [[unlikely]] {
+                return Status::IOError(ec.message());
+            }
+            RETURN_IF_ERROR(rebuild_dir(key_it));
+        }
+    } else {
+        std::filesystem::directory_iterator key_it {_cache_base_path, ec};
+        if (ec) [[unlikely]] {
+            return Status::IOError(ec.message());
+        }
+        RETURN_IF_ERROR(rebuild_dir(key_it));
+    }
+    return Status::OK();
+}
+
+Status FSFileCacheStorage::write_file_cache_version() const {
+    if constexpr (USE_CACHE_VERSION2) {
+        std::string version_path = get_version_path();
+        Slice version("2.0");
+        FileWriterPtr version_writer;
+        RETURN_IF_ERROR(global_local_filesystem()->create_file(version_path, &version_writer));
+        RETURN_IF_ERROR(version_writer->append(version));
+        return version_writer->close();
+    }
+    return Status::OK();
+}
+
+Status FSFileCacheStorage::read_file_cache_version(std::string* buffer) const {
+    std::string version_path = get_version_path();
+    const FileSystemSPtr& fs = global_local_filesystem();
+    bool exists = false;
+    RETURN_IF_ERROR(fs->exists(version_path, &exists));
+    if (!exists) {
+        *buffer = "1.0";
+        return Status::OK();
+    }
+    FileReaderSPtr version_reader;
+    int64_t file_size = -1;
+    RETURN_IF_ERROR(fs->file_size(version_path, &file_size));
+    buffer->resize(file_size);
+    RETURN_IF_ERROR(fs->open_file(version_path, &version_reader));
+    size_t bytes_read = 0;
+    RETURN_IF_ERROR(version_reader->read_at(0, Slice(buffer->data(), file_size), &bytes_read));
+    RETURN_IF_ERROR(version_reader->close());
+    return Status::OK();
+}
+
+std::string FSFileCacheStorage::get_version_path() const {
+    return Path(_cache_base_path) / "version";
+}
+
+void FSFileCacheStorage::load_cache_info_into_memory(BlockFileCacheManager* _mgr) const {
+    const FileSystemSPtr& fs = global_local_filesystem();
+    int scan_length = 10000;
+    std::vector<BatchLoadArgs> batch_load_buffer;
+    batch_load_buffer.reserve(scan_length);
+    auto add_cell_batch_func = [&]() {
+        std::lock_guard cache_lock(_mgr->_mutex);
+        std::for_each(batch_load_buffer.begin(), batch_load_buffer.end(),
+                      [&](const BatchLoadArgs& args) {
+                          // in async load mode, a cell may be added twice.
+                          if (_mgr->_files.count(args.hash) == 0 ||
+                              _mgr->_files[args.hash].count(args.offset) == 0) {
+                              // if the file is tmp, it means it is the old file and it should be removed
+                              if (args.is_tmp) {
+                                  std::error_code ec;
+                                  std::filesystem::remove(args.offset_path, ec);
+                                  if (ec) {
+                                      LOG(WARNING) << fmt::format("cannot remove {}: {}",
+                                                                  args.offset_path, ec.message());
+                                  }
+                              } else {
+                                  _mgr->add_cell(args.hash, args.ctx, args.offset, args.size,
+                                                 FileBlock::State::DOWNLOADED, cache_lock);
+                              }
+                          }
+                      });
+        batch_load_buffer.clear();
+    };
+
+    auto scan_file_cache = [&](std::filesystem::directory_iterator& key_it) {
+        for (; key_it != std::filesystem::directory_iterator(); ++key_it) {
+            auto key_with_suffix = key_it->path().filename().native();
+            auto delim_pos = key_with_suffix.find('_');
+            DCHECK(delim_pos != std::string::npos);
+            std::string key_str;
+            std::string expiration_time_str;
+            key_str = key_with_suffix.substr(0, delim_pos);
+            expiration_time_str = key_with_suffix.substr(delim_pos + 1);
+            auto hash = UInt128Wrapper(vectorized::unhex_uint<uint128_t>(key_str.c_str()));
+            std::error_code ec;
+            std::filesystem::directory_iterator offset_it(key_it->path(), ec);
+            if (ec) [[unlikely]] {
+                LOG(WARNING) << "filesystem error, failed to remove file, file=" << key_it->path()
+                             << " error=" << ec.message();
+                continue;
+            }
+            CacheContext context;
+            context.query_id = TUniqueId();
+            context.expiration_time = std::stol(expiration_time_str);
+            for (; offset_it != std::filesystem::directory_iterator(); ++offset_it) {
+                auto offset_with_suffix = offset_it->path().filename().native();
+                auto delim_pos1 = offset_with_suffix.find('_');
+                FileCacheType cache_type = FileCacheType::NORMAL;
+                bool parsed = true;
+                bool is_tmp = false;
+                size_t offset = 0;
+                try {
+                    if (delim_pos1 == std::string::npos) {
+                        // same as type "normal"
+                        offset = stoull(offset_with_suffix);
+                    } else {
+                        offset = stoull(offset_with_suffix.substr(0, delim_pos1));
+                        std::string suffix = offset_with_suffix.substr(delim_pos1 + 1);
+                        // not need persistent anymore
+                        // if suffix is equals to "tmp", it should be removed too.
+                        if (suffix == "tmp") [[unlikely]] {
+                            is_tmp = true;
+                        } else {
+                            cache_type = BlockFileCacheManager::string_to_cache_type(suffix);
+                        }
+                    }
+                } catch (...) {
+                    parsed = false;
+                }
+
+                if (!parsed) {
+                    LOG(WARNING) << "parse offset err, path=" << offset_it->path().native();
+                }
+
+                size_t size = offset_it->file_size();
+                if (size == 0 && !is_tmp) {
+                    auto st = fs->delete_file(offset_it->path());
+                    if (!st.ok()) {
+                        LOG_WARNING("delete file {} error", offset_it->path().native()).error(st);
+                    }
+                    continue;
+                }
+                context.cache_type = cache_type;
+                BatchLoadArgs args;
+                args.ctx = context;
+                args.hash = hash;
+                args.key_path = key_it->path();
+                args.offset_path = offset_it->path();
+                args.size = size;
+                args.offset = offset;
+                args.is_tmp = is_tmp;
+                batch_load_buffer.push_back(std::move(args));
+
+                // add lock
+                if (batch_load_buffer.size() >= scan_length) {
+                    add_cell_batch_func();
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
+                }
+            }
+        }
+    };
+    std::error_code ec;
+    if constexpr (USE_CACHE_VERSION2) {
+        std::filesystem::directory_iterator key_prefix_it {_cache_base_path, ec};
+        if (ec) {
+            LOG(WARNING) << ec.message();
+            return;
+        }
+        for (; key_prefix_it != std::filesystem::directory_iterator(); ++key_prefix_it) {
+            if (!key_prefix_it->is_directory()) {
+                // maybe version hits file
+                continue;
+            }
+            if (key_prefix_it->path().filename().native().size() != KEY_PREFIX_LENGTH) {
+                LOG(WARNING) << "Unknown directory " << key_prefix_it->path().native()
+                             << ", try to remove it";
+                std::filesystem::remove(key_prefix_it->path());
+                continue;
+            }
+            std::filesystem::directory_iterator key_it {key_prefix_it->path(), ec};
+            if (ec) {
+                LOG(WARNING) << ec.message();
+                return;
+            }
+            scan_file_cache(key_it);
+        }
+    } else {
+        std::filesystem::directory_iterator key_it {_cache_base_path, ec};
+        if (ec) {
+            LOG(WARNING) << ec.message();
+            return;
+        }
+        scan_file_cache(key_it);
+    }
+    if (batch_load_buffer.size() != 0) {
+        add_cell_batch_func();
+    }
+}
+
+void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* _mgr,
+                                                       const FileCacheKey& key,
+                                                       std::lock_guard<doris::Mutex>& cache_lock) {
+    // async load, can't find key, need to check exist.
+    const FileSystemSPtr& fs = global_local_filesystem();
+    auto key_path = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+    bool exists = false;
+    auto st = fs->exists(key_path, &exists);
+    if (auto st = fs->exists(key_path, &exists); !exists && st.ok()) {
+        // cache miss
+        return;
+    } else if (!st.ok()) [[unlikely]] {
+        LOG_WARNING("failed to exists file {}", key_path).error(st);
+        return;
+    }
+
+    CacheContext context_original;
+    context_original.query_id = TUniqueId();
+    context_original.expiration_time = key.meta.expiration_time;
+    std::error_code ec;
+    std::filesystem::directory_iterator check_it(key_path, ec);
+    if (ec) [[unlikely]] {
+        LOG(WARNING) << "fail to directory_iterator " << ec.message();
+        return;
+    }
+    for (; check_it != std::filesystem::directory_iterator(); ++check_it) {
+        uint64_t offset = 0;
+        auto offset_with_suffix = check_it->path().filename().native();
+        auto delim_pos1 = offset_with_suffix.find('_');
+        FileCacheType cache_type = FileCacheType::NORMAL;
+        bool parsed = true;
+        bool is_tmp = false;
+        try {
+            if (delim_pos1 == std::string::npos) {
+                // same as type "normal"
+                offset = stoull(offset_with_suffix);
+            } else {
+                offset = stoull(offset_with_suffix.substr(0, delim_pos1));
+                std::string suffix = offset_with_suffix.substr(delim_pos1 + 1);
+                if (suffix == "tmp") [[unlikely]] {
+                    is_tmp = true;
+                } else {
+                    cache_type = BlockFileCacheManager::string_to_cache_type(suffix);
+                }
+            }
+        } catch (...) {
+            parsed = false;
+        }
+
+        if (!parsed && !is_tmp) [[unlikely]] {
+            LOG(WARNING) << "parse offset err, path=" << offset_with_suffix;
+            continue;
+        }
+
+        size_t size = check_it->file_size();
+        if (size == 0) [[unlikely]] {
+            auto st = fs->delete_file(check_it->path());
+            if (!st.ok()) {
+                LOG_WARNING("Failed to delete file {}", check_it->path().native()).error(st);
+            }
+            continue;
+        }
+        if (_mgr->_files.count(key.hash) == 0 || _mgr->_files[key.hash].count(offset) == 0) {
+            // if the file is tmp, it means it is the old file and it should be removed
+            if (is_tmp) {
+                std::error_code ec;
+                std::filesystem::remove(check_it->path(), ec);
+                if (ec) {
+                    LOG(WARNING) << fmt::format("cannot remove {}: {}", check_it->path().native(),
+                                                ec.message());
+                }
+            } else {
+                context_original.cache_type = cache_type;
+                _mgr->add_cell(key.hash, context_original, offset, size,
+                               FileBlock::State::DOWNLOADED, cache_lock);
+            }
+        }
+    }
+}
+
+FSFileCacheStorage::~FSFileCacheStorage() {
+    if (_cache_background_load_thread.joinable()) {
+        _cache_background_load_thread.join();
     }
 }
 

@@ -29,7 +29,6 @@
 #include <utility>
 
 #include "common/status.h"
-#include "io/cache/block_file_cache_manager.h"
 #include "io/cache/file_cache_utils.h"
 #include "util/lock.h"
 #include "util/slice.h"
@@ -38,9 +37,11 @@ namespace doris {
 namespace io {
 
 struct FileBlocksHolder;
+class BlockFileCacheManager;
 
 class FileBlock {
     friend struct FileBlocksHolder;
+    friend class BlockFileCacheManager;
 
 public:
     enum class State {
@@ -96,13 +97,13 @@ public:
     State wait();
 
     // put data to cache file
-    Status put(Slice data);
+    [[nodiscard]] Status put(Slice data);
 
     // read data from cache file
-    Status read_at(Slice buffer, size_t read_offset);
+    [[nodiscard]] Status read_at(Slice buffer, size_t read_offset);
 
     // finish write, release the file writer
-    Status finalize_write();
+    [[nodiscard]] Status finalize_write();
 
     // set downloader if state == EMPTY
     uint64_t get_or_set_downloader();
@@ -119,13 +120,11 @@ public:
 
     std::string get_info_for_log() const;
 
-    Status change_cache_type_by_mgr(FileCacheType new_type);
+    [[nodiscard]] Status change_cache_type_by_mgr(FileCacheType new_type);
 
-    void change_cache_type_self(FileCacheType new_type);
+    [[nodiscard]] Status change_cache_type_self(FileCacheType new_type);
 
-    void update_expiration_time(int64_t expiration_time) {
-        _key.meta.expiration_time = expiration_time;
-    }
+    [[nodiscard]] Status update_expiration_time(int64_t expiration_time);
 
     int64_t expiration_time() const { return _key.meta.expiration_time; }
 
@@ -138,7 +137,7 @@ private:
     std::string get_info_for_log_impl(std::lock_guard<doris::Mutex>& block_lock) const;
     bool has_finalized_state() const;
 
-    Status set_downloaded(std::lock_guard<doris::Mutex>& block_lock);
+    [[nodiscard]] Status set_downloaded(std::lock_guard<doris::Mutex>& block_lock);
     bool is_downloader_impl(std::lock_guard<doris::Mutex>& block_lock) const;
 
     void complete_unlocked(std::lock_guard<doris::Mutex>& block_lock);
