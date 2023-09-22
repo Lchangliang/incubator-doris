@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <bvar/bvar.h>
+
 #include <memory>
 
 #include "io/cache/file_block.h"

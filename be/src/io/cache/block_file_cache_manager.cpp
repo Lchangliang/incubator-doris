@@ -509,7 +509,7 @@ BlockFileCacheManager::FileBlockCell* BlockFileCacheManager::add_cell(
     key.offset = offset;
     key.meta.type = context.cache_type;
     key.meta.expiration_time = context.expiration_time;
-    FileBlockCell cell(std::make_shared<FileBlock>(key, size, this, FileBlock::State::SKIP_CACHE),
+    FileBlockCell cell(std::make_shared<FileBlock>(key, size, this, state),
                        cache_lock);
     if (context.cache_type != FileCacheType::TTL) {
         auto& queue = get_queue(context.cache_type);
@@ -1031,9 +1031,6 @@ void BlockFileCacheManager::remove(FileBlockSPtr file_block,
         auto& queue = get_queue(file_block->cache_type());
         queue.remove(*cell->queue_iterator, cache_lock);
     }
-    _cur_cache_size -= file_block->range().size();
-    auto& offsets = _files[hash];
-    offsets.erase(file_block->offset());
     if (cell->file_block->state_unlock(block_lock) == FileBlock::State::DOWNLOADED) {
         FileCacheKey key;
         key.hash = hash;
@@ -1044,6 +1041,12 @@ void BlockFileCacheManager::remove(FileBlockSPtr file_block,
         if (!st.ok()) {
             LOG_WARNING("").error(st);
         }
+    }
+    _cur_cache_size -= file_block->range().size();
+    auto& offsets = _files[hash];
+    offsets.erase(file_block->offset());
+    if (offsets.empty()) {
+        _files.erase(hash);
     }
     _num_removed_blocks++;
 }

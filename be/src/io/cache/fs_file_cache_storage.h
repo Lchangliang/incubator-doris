@@ -20,6 +20,7 @@
 #include "io/cache/file_cache_storage.h"
 #include "io/cache/file_cache_utils.h"
 #include "io/fs/file_reader.h"
+#include "io/fs/local_file_system.h"
 #include "util/lock.h"
 
 namespace doris::io {
@@ -102,6 +103,7 @@ private:
 
     std::string _cache_base_path;
     std::thread _cache_background_load_thread;
+    const std::shared_ptr<LocalFileSystem>& fs = global_local_filesystem();
 
     struct BatchLoadArgs {
         UInt128Wrapper hash;

@@ -63,7 +63,7 @@ uint64_t FileBlock::get_caller_id() {
 uint64_t FileBlock::get_or_set_downloader() {
     std::lock_guard block_lock(_mutex);
 
-    if (_downloader_id == 0) {
+    if (_downloader_id == 0 && _download_state != State::DOWNLOADED) {
         DCHECK(_download_state != State::DOWNLOADING);
         _downloader_id = get_caller_id();
         _download_state = State::DOWNLOADING;
@@ -105,7 +105,6 @@ bool FileBlock::is_downloader_impl(std::lock_guard<std::mutex>& /* block_lock */
 Status FileBlock::put(Slice data) {
     DCHECK(data.size != 0) << "Writing zero size is not allowed";
     RETURN_IF_ERROR(_mgr->_storage->put(_key, data));
-    std::lock_guard lock(_mutex);
     if (data.size != _block_range.size()) {
         std::lock_guard cache_lock(_mgr->_mutex);
         size_t old_size = _block_range.size();
@@ -146,10 +145,12 @@ Status FileBlock::change_cache_type_self(FileCacheType new_type) {
     if (_key.meta.type == FileCacheType::TTL || new_type == _key.meta.type) {
         return Status::OK();
     }
-    KeyMeta new_meta;
-    new_meta.expiration_time = _key.meta.expiration_time;
-    new_meta.type = new_type;
-    RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
+    if (_download_state == State::DOWNLOADED) {
+        KeyMeta new_meta;
+        new_meta.expiration_time = _key.meta.expiration_time;
+        new_meta.type = new_type;
+        RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
+    }
     _key.meta.type = new_type;
     _mgr->change_cache_type(_key.hash, _block_range.left, new_type, cache_lock);
     return Status::OK();
@@ -157,10 +158,12 @@ Status FileBlock::change_cache_type_self(FileCacheType new_type) {
 
 Status FileBlock::update_expiration_time(int64_t expiration_time) {
     std::lock_guard block_lock(_mutex);
-    KeyMeta new_meta;
-    new_meta.expiration_time = expiration_time;
-    new_meta.type = _key.meta.type;
-    RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
+    if (_download_state == State::DOWNLOADED) {
+        KeyMeta new_meta;
+        new_meta.expiration_time = expiration_time;
+        new_meta.type = _key.meta.type;
+        RETURN_IF_ERROR(_mgr->_storage->change_key_meta(_key, new_meta));
+    }
     _key.meta.expiration_time = expiration_time;
     return Status::OK();
 }
