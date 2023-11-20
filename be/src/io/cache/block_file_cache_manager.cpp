@@ -26,9 +26,11 @@
 
 #include "common/logging.h"
 #include "io/cache/file_block.h"
+#include "io/cache/file_cache_utils.h"
 #include "io/cache/fs_file_cache_storage.h"
 #include "util/time.h"
 #include "vec/common/sip_hash.h"
+#include "vec/common/uint128.h"
 
 namespace doris::io {
 
@@ -268,6 +270,7 @@ FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const Cac
             if (st.ok()) {
                 auto& queue = get_queue(cell.file_block->cache_type());
                 queue.remove(cell.queue_iterator.value(), cache_lock);
+                cell.queue_iterator.reset();
                 st = cell.file_block->update_expiration_time(context.expiration_time);
             }
             if (!st.ok()) {
@@ -509,8 +512,7 @@ BlockFileCacheManager::FileBlockCell* BlockFileCacheManager::add_cell(
     key.offset = offset;
     key.meta.type = context.cache_type;
     key.meta.expiration_time = context.expiration_time;
-    FileBlockCell cell(std::make_shared<FileBlock>(key, size, this, state),
-                       cache_lock);
+    FileBlockCell cell(std::make_shared<FileBlock>(key, size, this, state), cache_lock);
     if (context.cache_type != FileCacheType::TTL) {
         auto& queue = get_queue(context.cache_type);
         cell.queue_iterator = queue.add(hash, offset, size, cache_lock);
@@ -1245,13 +1247,17 @@ void BlockFileCacheManager::run_background_operation() {
     while (!_close) {
         {
             std::unique_lock close_lock(_close_mtx);
-            if (_close) break;
+            if (_close) {
+                break;
+            }
 #if !defined(USE_BTHREAD_SCANNER)
             _close_cv.wait_for(close_lock, std::chrono::seconds(interval_time_seconds));
 #else
             _close_cv.wait_for(close_lock, interval_time_seconds * 1000000);
 #endif
-            if (_close) break;
+            if (_close) {
+                break;
+            }
         }
         check_disk_resource_limit(_cache_base_path);
         // gc
@@ -1322,6 +1328,7 @@ void BlockFileCacheManager::modify_expiration_time(const UInt128Wrapper& hash,
             if (st.ok()) {
                 auto& queue = get_queue(cell.file_block->cache_type());
                 queue.remove(cell.queue_iterator.value(), cache_lock);
+                cell.queue_iterator.reset();
                 st = cell.file_block->update_expiration_time(new_expiration_time);
             }
             if (!st.ok()) {

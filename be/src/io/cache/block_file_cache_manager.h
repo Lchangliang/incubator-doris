@@ -55,7 +55,7 @@ public:
 
     /// Restore cache from local filesystem.
     Status initialize();
-    Status initialize_unlocked(std::lock_guard<doris::Mutex>& cache_lock);
+    Status initialize_unlocked(std::lock_guard<std::mutex>& cache_lock);
     // when cache change to read-write  from read-only, it need reinitialize
     Status reinitialize();
 
@@ -88,13 +88,13 @@ public:
     [[nodiscard]] size_t get_file_blocks_num(FileCacheType type) const;
 
     void change_cache_type(const UInt128Wrapper& hash, size_t offset, FileCacheType new_type,
-                           std::lock_guard<doris::Mutex>& cache_lock);
+                           std::lock_guard<std::mutex>& cache_lock);
 
     void remove_if_cached(const UInt128Wrapper&);
     void modify_expiration_time(const UInt128Wrapper&, int64_t new_expiration_time);
 
     void reset_range(const UInt128Wrapper&, size_t offset, size_t old_size, size_t new_size,
-                     std::lock_guard<doris::Mutex>& cache_lock);
+                     std::lock_guard<std::mutex>& cache_lock);
 
     [[nodiscard]] std::vector<std::tuple<size_t, size_t, FileCacheType, int64_t>>
     get_hot_blocks_meta(const UInt128Wrapper& hash) const;
@@ -105,10 +105,10 @@ public:
     BlockFileCacheManager(const BlockFileCacheManager&) = delete;
 
     bool try_reserve(const UInt128Wrapper& hash, const CacheContext& context, size_t offset,
-                     size_t size, std::lock_guard<doris::Mutex>& cache_lock);
+                     size_t size, std::lock_guard<std::mutex>& cache_lock);
 
-    void remove(FileBlockSPtr file_block, std::lock_guard<doris::Mutex>& cache_lock,
-                std::lock_guard<doris::Mutex>& block_lock);
+    void remove(FileBlockSPtr file_block, std::lock_guard<std::mutex>& cache_lock,
+                std::lock_guard<std::mutex>& block_lock);
 
     class LRUQueue {
     public:
@@ -138,34 +138,34 @@ public:
         size_t get_max_size() const { return max_size; }
         size_t get_max_element_size() const { return max_element_size; }
 
-        size_t get_total_cache_size(std::lock_guard<doris::Mutex>& /* cache_lock */) const {
+        size_t get_total_cache_size(std::lock_guard<std::mutex>& /* cache_lock */) const {
             return cache_size;
         }
 
-        size_t get_elements_num(std::lock_guard<doris::Mutex>& /* cache_lock */) const {
+        size_t get_elements_num(std::lock_guard<std::mutex>& /* cache_lock */) const {
             return queue.size();
         }
 
         Iterator add(const UInt128Wrapper& hash, size_t offset, size_t size,
-                     std::lock_guard<doris::Mutex>& cache_lock);
+                     std::lock_guard<std::mutex>& cache_lock);
 
-        void remove(Iterator queue_it, std::lock_guard<doris::Mutex>& cache_lock);
+        void remove(Iterator queue_it, std::lock_guard<std::mutex>& cache_lock);
 
-        void move_to_end(Iterator queue_it, std::lock_guard<doris::Mutex>& cache_lock);
+        void move_to_end(Iterator queue_it, std::lock_guard<std::mutex>& cache_lock);
 
-        std::string to_string(std::lock_guard<doris::Mutex>& cache_lock) const;
+        std::string to_string(std::lock_guard<std::mutex>& cache_lock) const;
 
         bool contains(const UInt128Wrapper& hash, size_t offset,
-                      std::lock_guard<doris::Mutex>& cache_lock) const;
+                      std::lock_guard<std::mutex>& cache_lock) const;
 
         Iterator begin() { return queue.begin(); }
 
         Iterator end() { return queue.end(); }
 
-        void remove_all(std::lock_guard<doris::Mutex>& cache_lock);
+        void remove_all(std::lock_guard<std::mutex>& cache_lock);
 
         Iterator get(const UInt128Wrapper& hash, size_t offset,
-                     std::lock_guard<doris::Mutex>& /* cache_lock */) const;
+                     std::lock_guard<std::mutex>& /* cache_lock */) const;
 
         int64_t get_hot_data_interval() const { return hot_data_interval; }
 
@@ -189,14 +189,14 @@ public:
         QueryFileCacheContext(size_t max_cache_size) : lru_queue(max_cache_size, 0, 0) {}
 
         void remove(const UInt128Wrapper& hash, size_t offset,
-                    std::lock_guard<doris::Mutex>& cache_lock);
+                    std::lock_guard<std::mutex>& cache_lock);
 
         void reserve(const UInt128Wrapper& hash, size_t offset, size_t size,
-                     std::lock_guard<doris::Mutex>& cache_lock);
+                     std::lock_guard<std::mutex>& cache_lock);
 
         size_t get_max_cache_size() const { return lru_queue.get_max_size(); }
 
-        size_t get_cache_size(std::lock_guard<doris::Mutex>& cache_lock) const {
+        size_t get_cache_size(std::lock_guard<std::mutex>& cache_lock) const {
             return lru_queue.get_total_cache_size(cache_lock);
         }
 
@@ -207,12 +207,12 @@ public:
     using QueryFileCacheContextMap = std::unordered_map<TUniqueId, QueryFileCacheContextPtr>;
 
     QueryFileCacheContextPtr get_query_context(const TUniqueId& query_id,
-                                               std::lock_guard<doris::Mutex>&);
+                                               std::lock_guard<std::mutex>&);
 
     void remove_query_context(const TUniqueId& query_id);
 
     QueryFileCacheContextPtr get_or_set_query_context(const TUniqueId& query_id,
-                                                      std::lock_guard<doris::Mutex>&);
+                                                      std::lock_guard<std::mutex>&);
 
     /// Save a query context information, and adopt different cache policies
     /// for different queries through the context cache layer.
@@ -260,7 +260,7 @@ private:
 
         size_t size() const { return file_block->_block_range.size(); }
 
-        FileBlockCell(FileBlockSPtr file_block, std::lock_guard<doris::Mutex>& cache_lock);
+        FileBlockCell(FileBlockSPtr file_block, std::lock_guard<std::mutex>& cache_lock);
         FileBlockCell(FileBlockCell&& other) noexcept
                 : file_block(std::move(other.file_block)),
                   queue_iterator(other.queue_iterator),
@@ -274,60 +274,60 @@ private:
     const BlockFileCacheManager::LRUQueue& get_queue(FileCacheType type) const;
 
     FileBlocks get_impl(const UInt128Wrapper& hash, const CacheContext& context,
-                        const FileBlock::Range& range, std::lock_guard<doris::Mutex>& cache_lock);
+                        const FileBlock::Range& range, std::lock_guard<std::mutex>& cache_lock);
 
     FileBlockCell* get_cell(const UInt128Wrapper& hash, size_t offset,
-                            std::lock_guard<doris::Mutex>& cache_lock);
+                            std::lock_guard<std::mutex>& cache_lock);
 
     FileBlockCell* add_cell(const UInt128Wrapper& hash, const CacheContext& context, size_t offset,
                             size_t size, FileBlock::State state,
-                            std::lock_guard<doris::Mutex>& cache_lock);
+                            std::lock_guard<std::mutex>& cache_lock);
 
     void use_cell(const FileBlockCell& cell, FileBlocks* result, bool not_need_move,
-                  std::lock_guard<doris::Mutex>& cache_lock);
+                  std::lock_guard<std::mutex>& cache_lock);
 
     bool try_reserve_for_lru(const UInt128Wrapper& hash, QueryFileCacheContextPtr query_context,
                              const CacheContext& context, size_t offset, size_t size,
-                             std::lock_guard<doris::Mutex>& cache_lock);
+                             std::lock_guard<std::mutex>& cache_lock);
 
-    bool try_reserve_for_lazy_load(size_t size, std::lock_guard<doris::Mutex>& cache_lock);
+    bool try_reserve_for_lazy_load(size_t size, std::lock_guard<std::mutex>& cache_lock);
 
     std::vector<FileCacheType> get_other_cache_type(FileCacheType cur_cache_type);
 
     bool try_reserve_from_other_queue(FileCacheType cur_cache_type, size_t offset, int64_t cur_time,
-                                      std::lock_guard<doris::Mutex>& cache_lock);
+                                      std::lock_guard<std::mutex>& cache_lock);
 
     size_t get_available_cache_size(FileCacheType cache_type) const;
 
-    bool try_reserve_for_ttl(size_t size, std::lock_guard<doris::Mutex>& cache_lock);
+    bool try_reserve_for_ttl(size_t size, std::lock_guard<std::mutex>& cache_lock);
 
     FileBlocks split_range_into_cells(const UInt128Wrapper& hash, const CacheContext& context,
                                       size_t offset, size_t size, FileBlock::State state,
-                                      std::lock_guard<doris::Mutex>& cache_lock);
+                                      std::lock_guard<std::mutex>& cache_lock);
 
     std::string dump_structure_unlocked(const UInt128Wrapper& hash,
-                                        std::lock_guard<doris::Mutex>& cache_lock);
+                                        std::lock_guard<std::mutex>& cache_lock);
 
     void fill_holes_with_empty_file_blocks(FileBlocks& file_blocks, const UInt128Wrapper& hash,
                                            const CacheContext& context,
                                            const FileBlock::Range& range,
-                                           std::lock_guard<doris::Mutex>& cache_lock);
+                                           std::lock_guard<std::mutex>& cache_lock);
 
     size_t get_used_cache_size_unlocked(FileCacheType type,
-                                        std::lock_guard<doris::Mutex>& cache_lock) const;
+                                        std::lock_guard<std::mutex>& cache_lock) const;
 
     void check_disk_resource_limit(const std::string& path);
 
     size_t get_available_cache_size_unlocked(FileCacheType type,
-                                             std::lock_guard<doris::Mutex>& cache_lock) const;
+                                             std::lock_guard<std::mutex>& cache_lock) const;
 
     size_t get_file_blocks_num_unlocked(FileCacheType type,
-                                        std::lock_guard<doris::Mutex>& cache_lock) const;
+                                        std::lock_guard<std::mutex>& cache_lock) const;
 
     bool need_to_move(FileCacheType cell_type, FileCacheType query_type) const;
 
     bool remove_if_ttl_file_unlock(const UInt128Wrapper& file_key, bool remove_directly,
-                                   std::lock_guard<doris::Mutex>&);
+                                   std::lock_guard<std::mutex>&);
 
     void run_background_operation();
 
@@ -340,8 +340,8 @@ private:
     mutable std::mutex _mutex;
     std::unique_ptr<FileCacheStorage> _storage;
     bool _close {false};
-    doris::Mutex _close_mtx;
-    doris::ConditionVariable _close_cv;
+    std::mutex _close_mtx;
+    std::condition_variable _close_cv;
     std::thread _cache_background_thread;
     std::atomic_bool _lazy_open_done {false};
     // disk space or inode is less than the specified value

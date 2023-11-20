@@ -18,6 +18,7 @@
 #include "io/cache/fs_file_cache_storage.h"
 
 #include <filesystem>
+#include <mutex>
 #include <system_error>
 
 #include "common/logging.h"
@@ -33,6 +34,9 @@
 namespace doris::io {
 
 std::shared_ptr<FileReader> FDCache::get_file_reader(const AccessKeyAndOffset& key) {
+    if (config::file_cache_max_file_reader_cache_size == 0) [[unlikely]] {
+        return nullptr;
+    }
     std::shared_lock rlock(_mtx);
     if (auto iter = _file_name_to_reader.find(key); iter != _file_name_to_reader.end()) {
         return iter->second->second;
@@ -42,10 +46,11 @@ std::shared_ptr<FileReader> FDCache::get_file_reader(const AccessKeyAndOffset& k
 
 void FDCache::insert_file_reader(const AccessKeyAndOffset& key,
                                  std::shared_ptr<FileReader> file_reader) {
-    std::lock_guard wlock(_mtx);
-    if (_read_only) {
+    if (config::file_cache_max_file_reader_cache_size == 0) [[unlikely]] {
         return;
     }
+    std::lock_guard wlock(_mtx);
+
     if (auto iter = _file_name_to_reader.find(key); iter == _file_name_to_reader.end()) {
         if (config::file_cache_max_file_reader_cache_size == _file_reader_list.size()) {
             _file_name_to_reader.erase(_file_reader_list.back().first);
@@ -57,6 +62,9 @@ void FDCache::insert_file_reader(const AccessKeyAndOffset& key,
 }
 
 void FDCache::remove_file_reader(const AccessKeyAndOffset& key) {
+    if (config::file_cache_max_file_reader_cache_size == 0) [[unlikely]] {
+        return;
+    }
     std::lock_guard wlock(_mtx);
     if (auto iter = _file_name_to_reader.find(key); iter != _file_name_to_reader.end()) {
         _file_reader_list.erase(iter->second);
@@ -85,31 +93,52 @@ Status FSFileCacheStorage::init(BlockFileCacheManager* _mgr) {
     return Status::OK();
 }
 
-Status FSFileCacheStorage::put(const FileCacheKey& key, const Slice& value) {
-    std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
-    bool exists {false};
-    RETURN_IF_ERROR(fs->exists(dir, &exists));
-    if (!exists) {
-        RETURN_IF_ERROR(fs->create_directory(dir, false));
+Status FSFileCacheStorage::append(const FileCacheKey& key, const Slice& value) {
+    FileWriter* writer = nullptr;
+    {
+        std::lock_guard lock(_mtx);
+        if (auto iter = _key_to_writer.find(key.hash); iter != _key_to_writer.end()) {
+            writer = iter->second.get();
+        } else {
+            std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+            bool exists {false};
+            RETURN_IF_ERROR(fs->exists(dir, &exists));
+            if (!exists) {
+                RETURN_IF_ERROR(fs->create_directory(dir));
+            }
+            std::string tmp_file = get_path_in_local_cache(dir, key.offset, key.meta.type, true);
+            FileWriterPtr file_writer;
+            RETURN_IF_ERROR(fs->create_file(tmp_file, &file_writer));
+            writer = file_writer.get();
+            _key_to_writer.emplace(key.hash, std::move(file_writer));
+        }
     }
-    std::string tmp_file = get_path_in_local_cache(dir, key.offset, key.meta.type, true);
-    FileWriterPtr file_writer;
-    RETURN_IF_ERROR(fs->create_file(tmp_file, &file_writer));
-    RETURN_IF_ERROR(file_writer->append(value));
-    RETURN_IF_ERROR(file_writer->close());
-    std::string true_file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
-    RETURN_IF_ERROR(fs->rename(tmp_file, true_file));
-    return Status::OK();
+    DCHECK_NE(writer, nullptr);
+    return writer->append(value);
 }
 
-Status FSFileCacheStorage::get(const FileCacheKey& key, size_t value_offset, Slice buffer) {
+Status FSFileCacheStorage::finalize(const FileCacheKey& key) {
+    FileWriterPtr file_writer;
+    {
+        std::lock_guard lock(_mtx);
+        auto iter = _key_to_writer.find(key.hash);
+        DCHECK(iter != _key_to_writer.end());
+        file_writer = std::move(iter->second);
+        _key_to_writer.erase(iter);
+    }
+    RETURN_IF_ERROR(file_writer->close());
+    std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
+    std::string true_file = get_path_in_local_cache(dir, key.offset, key.meta.type);
+    return fs->rename(file_writer->path(), true_file);
+}
+
+Status FSFileCacheStorage::read(const FileCacheKey& key, size_t value_offset, Slice buffer) {
     AccessKeyAndOffset fd_key = std::make_pair(key.hash, key.offset);
-    FileReaderSPtr file_reader =
-            FDCache::instance()->get_file_reader(fd_key);
+    FileReaderSPtr file_reader = FDCache::instance()->get_file_reader(fd_key);
     if (!file_reader) {
         std::string file =
                 get_path_in_local_cache(get_path_in_local_cache(key.hash, key.meta.expiration_time),
-                                        key.offset, key.meta.type, false);
+                                        key.offset, key.meta.type);
         RETURN_IF_ERROR(fs->open_file(file, &file_reader));
         FDCache::instance()->insert_file_reader(fd_key, file_reader);
     }
@@ -121,14 +150,13 @@ Status FSFileCacheStorage::get(const FileCacheKey& key, size_t value_offset, Sli
 
 Status FSFileCacheStorage::remove(const FileCacheKey& key) {
     std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
-    std::string file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
+    std::string file = get_path_in_local_cache(dir, key.offset, key.meta.type);
     RETURN_IF_ERROR(fs->delete_file(file));
-    std::error_code ec;
-    bool is_empty_dir = std::filesystem::is_empty(dir, ec);
-    if (ec) {
-        return Status::InternalError("check dir {} is empty failed: {}", dir, ec.message());
-    }
-    if (is_empty_dir) {
+    std::vector<FileInfo> files;
+    bool exists {false};
+    RETURN_IF_ERROR(fs->list(dir, true, &files, &exists));
+    DCHECK(exists);
+    if (files.empty()) {
         RETURN_IF_ERROR(fs->delete_directory(dir));
     }
     FDCache::instance()->remove_file_reader(std::make_pair(key.hash, key.offset));
@@ -141,18 +169,16 @@ Status FSFileCacheStorage::change_key_meta(const FileCacheKey& key, const KeyMet
         std::string original_dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
         std::string new_dir = get_path_in_local_cache(key.hash, new_meta.expiration_time);
         // It will be concurrent, but we don't care who rename
-        fs->rename(original_dir, new_dir);
+        RETURN_IF_ERROR(fs->rename(original_dir, new_dir));
         if (key.meta.type != new_meta.type) {
-            std::string original_file =
-                    get_path_in_local_cache(new_dir, key.offset, key.meta.type, false);
-            std::string new_file =
-                    get_path_in_local_cache(new_dir, key.offset, new_meta.type, false);
+            std::string original_file = get_path_in_local_cache(new_dir, key.offset, key.meta.type);
+            std::string new_file = get_path_in_local_cache(new_dir, key.offset, new_meta.type);
             RETURN_IF_ERROR(fs->rename(original_file, new_file));
         }
     } else {
         std::string dir = get_path_in_local_cache(key.hash, key.meta.expiration_time);
-        std::string original_file = get_path_in_local_cache(dir, key.offset, key.meta.type, false);
-        std::string new_file = get_path_in_local_cache(dir, key.offset, new_meta.type, false);
+        std::string original_file = get_path_in_local_cache(dir, key.offset, key.meta.type);
+        std::string new_file = get_path_in_local_cache(dir, key.offset, new_meta.type);
         RETURN_IF_ERROR(fs->rename(original_file, new_file));
     }
     return Status::OK();
@@ -433,9 +459,9 @@ void FSFileCacheStorage::load_cache_info_into_memory(BlockFileCacheManager* _mgr
     }
 }
 
-void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* _mgr,
+void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* mgr,
                                                        const FileCacheKey& key,
-                                                       std::lock_guard<doris::Mutex>& cache_lock) {
+                                                       std::lock_guard<std::mutex>& cache_lock) {
     // async load, can't find key, need to check exist.
     auto key_path = get_path_in_local_cache(key.hash, key.meta.expiration_time);
     bool exists = false;
@@ -494,7 +520,7 @@ void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* _m
             }
             continue;
         }
-        if (_mgr->_files.count(key.hash) == 0 || _mgr->_files[key.hash].count(offset) == 0) {
+        if (mgr->_files.count(key.hash) == 0 || mgr->_files[key.hash].count(offset) == 0) {
             // if the file is tmp, it means it is the old file and it should be removed
             if (is_tmp) {
                 std::error_code ec;
@@ -505,8 +531,8 @@ void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* _m
                 }
             } else {
                 context_original.cache_type = cache_type;
-                _mgr->add_cell(key.hash, context_original, offset, size,
-                               FileBlock::State::DOWNLOADED, cache_lock);
+                mgr->add_cell(key.hash, context_original, offset, size,
+                              FileBlock::State::DOWNLOADED, cache_lock);
             }
         }
     }

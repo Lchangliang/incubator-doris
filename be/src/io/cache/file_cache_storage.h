@@ -30,8 +30,9 @@ public:
     FileCacheStorage() = default;
     virtual ~FileCacheStorage() = default;
     virtual Status init(BlockFileCacheManager* _mgr) = 0;
-    virtual Status put(const FileCacheKey& key, const Slice& value) = 0;
-    virtual Status get(const FileCacheKey& key, size_t value_offset, Slice result) = 0;
+    virtual Status append(const FileCacheKey& key, const Slice& value) = 0;
+    virtual Status finalize(const FileCacheKey& key) = 0;
+    virtual Status read(const FileCacheKey& key, size_t value_offset, Slice result) = 0;
     virtual Status remove(const FileCacheKey& key) = 0;
     virtual Status change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) = 0;
     // use when lazy load cache

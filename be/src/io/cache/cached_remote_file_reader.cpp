@@ -139,7 +139,8 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
             SCOPED_RAW_TIMER(&stats.local_write_timer);
             char* cur_ptr = buffer.get() + block->range().left - empty_start;
             size_t block_size = block->range().size();
-            RETURN_IF_ERROR(block->put(Slice(cur_ptr, block_size)));
+            RETURN_IF_ERROR(block->append(Slice(cur_ptr, block_size)));
+            RETURN_IF_ERROR(block->finalize());
             stats.bytes_write_into_file_cache += block_size;
         }
         // copy from memory directly
@@ -200,7 +201,7 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
             if (block_state == FileBlock::State::DOWNLOADED) {
                 size_t file_offset = current_offset - left;
                 SCOPED_RAW_TIMER(&stats.local_read_timer);
-                st = block->read_at(Slice(result.data + (current_offset - offset), read_size),
+                st = block->read(Slice(result.data + (current_offset - offset), read_size),
                                     file_offset);
             }
             if (!st || block_state == FileBlock::State::EMPTY) {

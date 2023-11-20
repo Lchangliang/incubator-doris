@@ -54,8 +54,7 @@ FileBlock::State FileBlock::state() const {
 }
 
 uint64_t FileBlock::get_caller_id() {
-    uint64_t id = 0;
-    id = bthread_self() == 0 ? static_cast<uint64_t>(pthread_self()) : bthread_self();
+    uint64_t id = static_cast<uint64_t>(pthread_self());
     DCHECK(id != 0);
     return id;
 }
@@ -84,8 +83,32 @@ void FileBlock::reset_downloader(std::lock_guard<std::mutex>& block_lock) {
 }
 
 void FileBlock::reset_downloader_impl(std::lock_guard<std::mutex>& block_lock) {
-    _download_state = State::EMPTY;
+    if (_downloaded_size == range().size()) {
+        Status st = set_downloaded(block_lock);
+        if (!st.ok()) {
+            LOG(WARNING) << "reset downloader error" << st;
+        }
+    } else {
+        _downloaded_size = 0;
+        _download_state = State::EMPTY;
+        _downloader_id = 0;
+    }
+}
+
+Status FileBlock::set_downloaded(std::lock_guard<std::mutex>& /* block_lock */) {
+    DCHECK(_download_state != State::DOWNLOADED);
+    DCHECK_NE(_downloaded_size, 0);
+    
+    Status status = _mgr->_storage->finalize(_key);
+
+    if (status.ok()) [[likely]] {
+        _download_state = State::DOWNLOADED;
+    } else {
+        _download_state = State::EMPTY;
+        _downloaded_size = 0;
+    }
     _downloader_id = 0;
+    return status;
 }
 
 uint64_t FileBlock::get_downloader() const {
@@ -102,26 +125,30 @@ bool FileBlock::is_downloader_impl(std::lock_guard<std::mutex>& /* block_lock */
     return get_caller_id() == _downloader_id;
 }
 
-Status FileBlock::put(Slice data) {
+Status FileBlock::append(Slice data) {
     DCHECK(data.size != 0) << "Writing zero size is not allowed";
-    RETURN_IF_ERROR(_mgr->_storage->put(_key, data));
-    if (data.size != _block_range.size()) {
+    RETURN_IF_ERROR(_mgr->_storage->append(_key, data));
+    _downloaded_size += data.size;
+    return Status::OK();
+}
+
+Status FileBlock::finalize() {
+    if (_downloaded_size != 0 && _downloaded_size != _block_range.size()) {
         std::lock_guard cache_lock(_mgr->_mutex);
         size_t old_size = _block_range.size();
-        _block_range.right = _block_range.left + data.size - 1;
+        _block_range.right = _block_range.left + _downloaded_size - 1;
         size_t new_size = _block_range.size();
         DCHECK(new_size < old_size);
         _mgr->reset_range(_key.hash, _block_range.left, old_size, new_size, cache_lock);
     }
     std::lock_guard block_lock(_mutex);
-    _download_state = State::DOWNLOADED;
-    _downloader_id = 0;
+    RETURN_IF_ERROR(set_downloaded(block_lock));
     _cv.notify_all();
     return Status::OK();
 }
 
-Status FileBlock::read_at(Slice buffer, size_t read_offset) {
-    return _mgr->_storage->get(_key, read_offset, buffer);
+Status FileBlock::read(Slice buffer, size_t read_offset) {
+    return _mgr->_storage->read(_key, read_offset, buffer);
 }
 
 Status FileBlock::change_cache_type_by_mgr(FileCacheType new_type) {

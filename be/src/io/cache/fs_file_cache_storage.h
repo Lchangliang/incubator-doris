@@ -17,9 +17,13 @@
 
 #pragma once
 
+#include <memory>
+#include <shared_mutex>
+
 #include "io/cache/file_cache_storage.h"
 #include "io/cache/file_cache_utils.h"
 #include "io/fs/file_reader.h"
+#include "io/fs/file_writer.h"
 #include "io/fs/local_file_system.h"
 #include "util/lock.h"
 
@@ -30,20 +34,6 @@ public:
     static FDCache* instance() {
         static FDCache fd_cache;
         return &fd_cache;
-    }
-
-    void set_read_only(bool read_only) {
-        std::lock_guard wlock(_mtx);
-        _read_only = read_only;
-        if (read_only) {
-            _file_reader_list.clear();
-            _file_name_to_reader.clear();
-        }
-    };
-
-    bool is_read_only() const {
-        std::shared_lock rlock(_mtx);
-        return _read_only;
     }
 
     std::shared_ptr<FileReader> get_file_reader(const AccessKeyAndOffset& key);
@@ -60,8 +50,7 @@ private:
     std::list<std::pair<AccessKeyAndOffset, std::shared_ptr<FileReader>>> _file_reader_list;
     std::unordered_map<AccessKeyAndOffset, decltype(_file_reader_list.begin()), KeyAndOffsetHash>
             _file_name_to_reader;
-    mutable doris::SharedMutex _mtx;
-    bool _read_only {false};
+    mutable std::shared_mutex _mtx;
 };
 
 class FSFileCacheStorage : public FileCacheStorage {
@@ -75,8 +64,9 @@ public:
     FSFileCacheStorage() = default;
     ~FSFileCacheStorage() override;
     [[nodiscard]] Status init(BlockFileCacheManager* _mgr) override;
-    [[nodiscard]] Status put(const FileCacheKey& key, const Slice& value) override;
-    [[nodiscard]] Status get(const FileCacheKey& key, size_t value_offset, Slice buffer) override;
+    [[nodiscard]] Status append(const FileCacheKey& key, const Slice& value) override;
+    [[nodiscard]] Status finalize(const FileCacheKey& key) override;
+    [[nodiscard]] Status read(const FileCacheKey& key, size_t value_offset, Slice buffer) override;
     [[nodiscard]] Status remove(const FileCacheKey& key) override;
     [[nodiscard]] Status change_key_meta(const FileCacheKey& key, const KeyMeta& new_meta) override;
     // use when lazy load cache
@@ -104,6 +94,9 @@ private:
     std::string _cache_base_path;
     std::thread _cache_background_load_thread;
     const std::shared_ptr<LocalFileSystem>& fs = global_local_filesystem();
+    // TODO(Lchangliang): use a more efficient data structure
+    std::mutex _mtx;
+    std::unordered_map<UInt128Wrapper, FileWriterPtr, KeyHash> _key_to_writer;
 
     struct BatchLoadArgs {
         UInt128Wrapper hash;

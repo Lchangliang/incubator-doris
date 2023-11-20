@@ -96,21 +96,21 @@ public:
 
     State wait();
 
-    // put data to cache file
-    [[nodiscard]] Status put(Slice data);
+    // append data to cache file
+    [[nodiscard]] Status append(Slice data);
 
     // read data from cache file
-    [[nodiscard]] Status read_at(Slice buffer, size_t read_offset);
+    [[nodiscard]] Status read(Slice buffer, size_t read_offset);
 
     // finish write, release the file writer
-    [[nodiscard]] Status finalize_write();
+    [[nodiscard]] Status finalize();
 
     // set downloader if state == EMPTY
     uint64_t get_or_set_downloader();
 
     uint64_t get_downloader() const;
 
-    void reset_downloader(std::lock_guard<doris::Mutex>& block_lock);
+    void reset_downloader(std::lock_guard<std::mutex>& block_lock);
 
     bool is_downloader() const;
 
@@ -128,21 +128,21 @@ public:
 
     int64_t expiration_time() const { return _key.meta.expiration_time; }
 
-    State state_unlock(std::lock_guard<doris::Mutex>&) const;
+    State state_unlock(std::lock_guard<std::mutex>&) const;
 
     FileBlock& operator=(const FileBlock&) = delete;
     FileBlock(const FileBlock&) = delete;
 
 private:
-    std::string get_info_for_log_impl(std::lock_guard<doris::Mutex>& block_lock) const;
+    std::string get_info_for_log_impl(std::lock_guard<std::mutex>& block_lock) const;
     bool has_finalized_state() const;
 
-    [[nodiscard]] Status set_downloaded(std::lock_guard<doris::Mutex>& block_lock);
-    bool is_downloader_impl(std::lock_guard<doris::Mutex>& block_lock) const;
+    [[nodiscard]] Status set_downloaded(std::lock_guard<std::mutex>& block_lock);
+    bool is_downloader_impl(std::lock_guard<std::mutex>& block_lock) const;
 
-    void complete_unlocked(std::lock_guard<doris::Mutex>& block_lock);
+    void complete_unlocked(std::lock_guard<std::mutex>& block_lock);
 
-    void reset_downloader_impl(std::lock_guard<doris::Mutex>& block_lock);
+    void reset_downloader_impl(std::lock_guard<std::mutex>& block_lock);
 
     Range _block_range;
 
@@ -155,9 +155,10 @@ private:
     /// global locking order rule:
     /// 1. cache lock
     /// 2. block lock
-    mutable doris::Mutex _mutex;
-    doris::ConditionVariable _cv;
+    mutable std::mutex _mutex;
+    std::condition_variable _cv;
     FileCacheKey _key;
+    size_t _downloaded_size {0};
 };
 
 using FileBlockSPtr = std::shared_ptr<FileBlock>;
@@ -165,6 +166,8 @@ using FileBlocks = std::list<FileBlockSPtr>;
 
 struct FileBlocksHolder {
     explicit FileBlocksHolder(FileBlocks file_blocks) : file_blocks(std::move(file_blocks)) {}
+    FileBlocksHolder(FileBlocksHolder&& other) noexcept
+            : file_blocks(std::move(other.file_blocks)) {}
 
     FileBlocksHolder& operator=(const FileBlocksHolder&) = delete;
     FileBlocksHolder(const FileBlocksHolder&) = delete;
