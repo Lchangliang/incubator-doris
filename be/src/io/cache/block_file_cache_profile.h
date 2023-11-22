@@ -46,9 +46,6 @@ struct FileCacheMetric {
             : profile(profile), table_id(table_id) {}
 
     void register_entity();
-    void deregister_entity() const {
-        DorisMetrics::instance()->metric_registry()->deregister_entity(entity);
-    }
     void update_table_metrics() const;
 
     FileCacheMetric& operator=(const FileCacheMetric&) = delete;
@@ -68,25 +65,12 @@ struct FileCacheProfile {
     }
 
     FileCacheProfile() {
-        OlapReaderStatistics stats;
+        FileCacheStatistics stats;
         update(0, &stats);
     }
 
-    // avoid performance impact, use https to control
-    inline static std::atomic<bool> s_enable_profile = true;
+    void update(int64_t table_id, FileCacheStatistics* stats);
 
-    static void set_enable_profile(bool flag) {
-        // if enable_profile = false originally, set true, it will clear the count
-        if (!s_enable_profile && flag) {
-            std::lock_guard lock(instance()._mtx);
-            instance()._profile.clear();
-        }
-        s_enable_profile.store(flag, std::memory_order_release);
-    }
-
-    void update(int64_t table_id, OlapReaderStatistics* stats);
-
-    void deregister_metric(int64_t table_id);
     std::mutex _mtx;
     // use shared_ptr for concurrent
     std::unordered_map<int64_t, std::shared_ptr<AtomicStatistics>> _profile;

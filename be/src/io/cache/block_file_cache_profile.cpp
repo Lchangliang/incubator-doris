@@ -30,19 +30,14 @@ DEFINE_COUNTER_METRIC_PROTOTYPE_2ARG(num_io_bytes_read_from_remote, MetricUnit::
 
 std::shared_ptr<AtomicStatistics> FileCacheProfile::report(int64_t table_id) {
     std::shared_ptr<AtomicStatistics> stats = std::make_shared<AtomicStatistics>();
-    if (_profile.count(table_id) == 1) {
-        std::lock_guard lock(_mtx);
-        auto& table_stats = _profile[table_id];
-        stats->num_io_bytes_read_from_cache += table_stats->num_io_bytes_read_from_cache;
-        stats->num_io_bytes_read_from_remote += table_stats->num_io_bytes_read_from_remote;
-    }
+    std::lock_guard lock(_mtx);
+    auto& table_stats = _profile[table_id];
+    stats->num_io_bytes_read_from_cache += table_stats->num_io_bytes_read_from_cache;
+    stats->num_io_bytes_read_from_remote += table_stats->num_io_bytes_read_from_remote;
     return stats;
 }
 
-void FileCacheProfile::update(int64_t table_id, OlapReaderStatistics* stats) {
-    if (!s_enable_profile.load(std::memory_order_acquire)) {
-        return;
-    }
+void FileCacheProfile::update(int64_t table_id, FileCacheStatistics* stats) {
     std::shared_ptr<AtomicStatistics> count;
     std::shared_ptr<FileCacheMetric> table_metric;
     {
@@ -57,23 +52,8 @@ void FileCacheProfile::update(int64_t table_id, OlapReaderStatistics* stats) {
     if (table_metric) [[unlikely]] {
         table_metric->register_entity();
     }
-    count->num_io_bytes_read_from_cache += stats->file_cache_stats.bytes_read_from_local;
-    count->num_io_bytes_read_from_remote += stats->file_cache_stats.bytes_read_from_remote;
-}
-
-void FileCacheProfile::deregister_metric(int64_t table_id) {
-    if (!s_enable_profile.load(std::memory_order_acquire)) {
-        return;
-    }
-    std::shared_ptr<FileCacheMetric> table_metric;
-    {
-        std::lock_guard lock(_mtx);
-        _profile.erase(table_id);
-        table_metric = _table_metrics[table_id];
-        _table_metrics.erase(table_id);
-    }
-
-    table_metric->deregister_entity();
+    count->num_io_bytes_read_from_cache += stats->bytes_read_from_local;
+    count->num_io_bytes_read_from_remote += stats->bytes_read_from_remote;
 }
 
 void FileCacheMetric::register_entity() {

@@ -98,9 +98,7 @@ void FileBlock::reset_downloader_impl(std::lock_guard<std::mutex>& block_lock) {
 Status FileBlock::set_downloaded(std::lock_guard<std::mutex>& /* block_lock */) {
     DCHECK(_download_state != State::DOWNLOADED);
     DCHECK_NE(_downloaded_size, 0);
-    
     Status status = _mgr->_storage->finalize(_key);
-
     if (status.ok()) [[likely]] {
         _download_state = State::DOWNLOADED;
     } else {
@@ -142,9 +140,9 @@ Status FileBlock::finalize() {
         _mgr->reset_range(_key.hash, _block_range.left, old_size, new_size, cache_lock);
     }
     std::lock_guard block_lock(_mutex);
-    RETURN_IF_ERROR(set_downloaded(block_lock));
+    Status st = set_downloaded(block_lock);
     _cv.notify_all();
-    return Status::OK();
+    return st;
 }
 
 Status FileBlock::read(Slice buffer, size_t read_offset) {
@@ -257,10 +255,6 @@ std::string FileBlock::state_to_string(FileBlock::State state) {
     }
 }
 
-bool FileBlock::has_finalized_state() const {
-    return _download_state == State::DOWNLOADED;
-}
-
 FileBlocksHolder::~FileBlocksHolder() {
     for (auto file_block_it = file_blocks.begin(); file_block_it != file_blocks.end();) {
         auto current_file_block_it = file_block_it;
@@ -280,17 +274,6 @@ FileBlocksHolder::~FileBlocksHolder() {
         }
         file_block_it = file_blocks.erase(current_file_block_it);
     }
-}
-
-std::string FileBlocksHolder::to_string() {
-    std::string ranges;
-    for (const auto& file_block : file_blocks) {
-        if (!ranges.empty()) {
-            ranges += ", ";
-        }
-        ranges += file_block->range().to_string();
-    }
-    return ranges;
 }
 
 } // namespace io

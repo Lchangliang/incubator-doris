@@ -27,6 +27,12 @@
 
 namespace doris::io {
 
+template <class Lock>
+concept IsXLock = requires {
+    std::same_as<Lock, std::lock_guard<doris::Mutex>> ||
+            std::same_as<Lock, std::unique_lock<doris::Mutex>>;
+};
+
 class FSFileCacheStorage;
 
 class BlockFileCacheManager {
@@ -56,8 +62,6 @@ public:
     /// Restore cache from local filesystem.
     Status initialize();
     Status initialize_unlocked(std::lock_guard<std::mutex>& cache_lock);
-    // when cache change to read-write  from read-only, it need reinitialize
-    Status reinitialize();
 
     /// Cache capacity in bytes.
     [[nodiscard]] size_t capacity() const { return _total_size; }
@@ -79,6 +83,8 @@ public:
          */
     FileBlocksHolder get_or_set(const UInt128Wrapper& hash, size_t offset, size_t size,
                                 const CacheContext& context);
+
+    void clear_file_cache_async();
 
     /// For debug.
     std::string dump_structure(const UInt128Wrapper& hash);
@@ -107,8 +113,9 @@ public:
     bool try_reserve(const UInt128Wrapper& hash, const CacheContext& context, size_t offset,
                      size_t size, std::lock_guard<std::mutex>& cache_lock);
 
-    void remove(FileBlockSPtr file_block, std::lock_guard<std::mutex>& cache_lock,
-                std::lock_guard<std::mutex>& block_lock);
+    template <class T, class U>
+        requires IsXLock<T> && IsXLock<U>
+    void remove(FileBlockSPtr file_block, T& cache_lock, U& segment_lock);
 
     class LRUQueue {
     public:
@@ -138,7 +145,9 @@ public:
         size_t get_max_size() const { return max_size; }
         size_t get_max_element_size() const { return max_element_size; }
 
-        size_t get_total_cache_size(std::lock_guard<std::mutex>& /* cache_lock */) const {
+        template <class T>
+            requires IsXLock<T>
+        size_t get_total_cache_size(T& /* cache_lock */) const {
             return cache_size;
         }
 
@@ -148,8 +157,9 @@ public:
 
         Iterator add(const UInt128Wrapper& hash, size_t offset, size_t size,
                      std::lock_guard<std::mutex>& cache_lock);
-
-        void remove(Iterator queue_it, std::lock_guard<std::mutex>& cache_lock);
+        template <class T>
+            requires IsXLock<T>
+        void remove(Iterator queue_it, T& cache_lock);
 
         void move_to_end(Iterator queue_it, std::lock_guard<std::mutex>& cache_lock);
 
@@ -247,6 +257,7 @@ private:
         std::optional<LRUQueue::Iterator> queue_iterator;
 
         mutable int64_t atime {0};
+        mutable bool is_deleted {false};
         void update_atime() const {
             atime = std::chrono::duration_cast<std::chrono::seconds>(
                             std::chrono::steady_clock::now().time_since_epoch())
@@ -276,8 +287,9 @@ private:
     FileBlocks get_impl(const UInt128Wrapper& hash, const CacheContext& context,
                         const FileBlock::Range& range, std::lock_guard<std::mutex>& cache_lock);
 
-    FileBlockCell* get_cell(const UInt128Wrapper& hash, size_t offset,
-                            std::lock_guard<std::mutex>& cache_lock);
+    template <class T>
+        requires IsXLock<T>
+    FileBlockCell* get_cell(const UInt128Wrapper& hash, size_t offset, T& cache_lock);
 
     FileBlockCell* add_cell(const UInt128Wrapper& hash, const CacheContext& context, size_t offset,
                             size_t size, FileBlock::State state,
@@ -331,6 +343,8 @@ private:
 
     void run_background_operation();
 
+    void recycle_deleted_blocks();
+
     // info
     std::string _cache_base_path;
     size_t _total_size = 0;
@@ -344,6 +358,7 @@ private:
     std::condition_variable _close_cv;
     std::thread _cache_background_thread;
     std::atomic_bool _lazy_open_done {false};
+    bool _async_clear_file_cache {false};
     // disk space or inode is less than the specified value
     bool _disk_resource_limit_mode {false};
     bool _is_initialized {false};

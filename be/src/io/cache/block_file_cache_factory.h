@@ -48,8 +48,6 @@ public:
 
     Status reload_file_cache();
 
-    void set_read_only();
-
     [[nodiscard]] size_t get_total_cache_size() const { return _total_cache_size; }
 
     [[nodiscard]] size_t get_cache_instance_size() const { return _caches.size(); }
@@ -58,6 +56,7 @@ public:
     BlockFileCacheManagerPtr get_by_path(const std::string& cache_base_path);
     std::vector<BlockFileCacheManager::QueryFileCacheContextHolderPtr> get_query_context_holders(
             const TUniqueId& query_id);
+    void clear_file_caches();
     FileCacheFactory() = default;
     FileCacheFactory& operator=(const FileCacheFactory&) = delete;
     FileCacheFactory(const FileCacheFactory&) = delete;

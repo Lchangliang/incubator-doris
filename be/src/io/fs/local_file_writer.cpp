@@ -34,6 +34,7 @@
 
 // IWYU pragma: no_include <opentelemetry/common/threadlocal.h>
 #include "common/compiler_util.h" // IWYU pragma: keep
+#include "common/sync_point.h"
 #include "common/status.h"
 #include "gutil/macros.h"
 #include "io/fs/file_writer.h"
@@ -89,11 +90,13 @@ Status LocalFileWriter::close() {
 }
 
 Status LocalFileWriter::abort() {
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("LocalFileWriter::abort", Status::IOError("inject io error"));
     RETURN_IF_ERROR(_close(false));
     return io::global_local_filesystem()->delete_file(_path);
 }
 
 Status LocalFileWriter::appendv(const Slice* data, size_t data_cnt) {
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("LocalFileWriter::appendv", Status::IOError("inject io error"));
     DCHECK(!_closed);
     _dirty = true;
 
@@ -166,6 +169,7 @@ Status LocalFileWriter::write_at(size_t offset, const Slice& data) {
 }
 
 Status LocalFileWriter::finalize() {
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("LocalFileWriter::finalize", Status::IOError("inject io error"));
     DCHECK(!_closed);
     if (_dirty) {
 #if defined(__linux__)
@@ -183,6 +187,7 @@ Status LocalFileWriter::_close(bool sync) {
         return Status::OK();
     }
     _closed = true;
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("LocalFileWriter::close", Status::IOError("inject io error"));
     if (sync && _dirty) {
 #ifdef __APPLE__
         if (fcntl(_fd, F_FULLFSYNC) < 0) {

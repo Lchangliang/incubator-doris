@@ -52,15 +52,15 @@ public:
     IOContext() = default;
 
     IOContext(const TUniqueId* query_id, FileCacheStatistics* stats, bool use_disposable_cache,
-              bool read_segment_index)
+              bool set_block_index)
             : query_id(query_id),
               is_disposable(use_disposable_cache),
-              read_segment_index(read_segment_index),
+              set_block_index(set_block_index),
               file_cache_stats(stats) {}
     ReaderType reader_type = ReaderType::UNKNOWN;
     const TUniqueId* query_id = nullptr;
     bool is_disposable = false;
-    bool read_segment_index = false;
+    bool set_block_index = false;
     int64_t expiration_time {0};
     FileCacheStatistics* file_cache_stats = nullptr;
 };

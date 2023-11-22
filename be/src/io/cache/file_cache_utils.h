@@ -25,6 +25,7 @@
 namespace doris::io {
 
 inline static constexpr size_t REMOTE_FS_OBJECTS_CACHE_DEFAULT_ELEMENTS = 100 * 1024;
+static constexpr size_t FILE_CACHE_MAX_FILE_BLOCK_SIZE = 1 * 1024 * 1024;
 
 using uint128_t = vectorized::UInt128;
 using UInt128Hash = vectorized::UInt128Hash;
@@ -88,7 +89,7 @@ FileCacheSettings calc_settings(size_t total_size, size_t max_query_cache_size);
 
 struct CacheContext {
     CacheContext(const IOContext* io_context) {
-        if (io_context->read_segment_index) {
+        if (io_context->set_block_index) {
             cache_type = FileCacheType::INDEX;
         } else if (io_context->is_disposable) {
             cache_type = FileCacheType::DISPOSABLE;
@@ -101,6 +102,10 @@ struct CacheContext {
         query_id = io_context->query_id ? *io_context->query_id : TUniqueId();
     }
     CacheContext() = default;
+    bool operator==(const CacheContext& rhs) const {
+        return query_id == rhs.query_id && cache_type == rhs.cache_type &&
+               expiration_time == rhs.expiration_time && is_cold_data == rhs.is_cold_data;
+    }
     TUniqueId query_id;
     FileCacheType cache_type;
     int64_t expiration_time {0};

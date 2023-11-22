@@ -113,5 +113,11 @@ FileCacheFactory::get_query_context_holders(const TUniqueId& query_id) {
     return holders;
 }
 
+void FileCacheFactory::clear_file_caches() {
+    for (const auto& cache : _caches) {
+        cache->clear_file_cache_async();
+    }
+}
+
 } // namespace io
 } // namespace doris

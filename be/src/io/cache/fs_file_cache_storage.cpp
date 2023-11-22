@@ -22,6 +22,7 @@
 #include <system_error>
 
 #include "common/logging.h"
+#include "common/sync_point.h"
 #include "io/cache/block_file_cache_manager.h"
 #include "io/cache/file_block.h"
 #include "io/cache/file_cache_utils.h"
@@ -345,6 +346,7 @@ void FSFileCacheStorage::load_cache_info_into_memory(BlockFileCacheManager* _mgr
     };
 
     auto scan_file_cache = [&](std::filesystem::directory_iterator& key_it) {
+        TEST_SYNC_POINT_CALLBACK("BlockFileCache::TmpFile1");
         for (; key_it != std::filesystem::directory_iterator(); ++key_it) {
             auto key_with_suffix = key_it->path().filename().native();
             auto delim_pos = key_with_suffix.find('_');
@@ -457,6 +459,7 @@ void FSFileCacheStorage::load_cache_info_into_memory(BlockFileCacheManager* _mgr
     if (batch_load_buffer.size() != 0) {
         add_cell_batch_func();
     }
+    TEST_SYNC_POINT_CALLBACK("BlockFileCache::TmpFile2");
 }
 
 void FSFileCacheStorage::load_blocks_directly_unlocked(BlockFileCacheManager* mgr,

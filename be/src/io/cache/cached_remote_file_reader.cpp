@@ -29,6 +29,7 @@
 // IWYU pragma: no_include <opentelemetry/common/threadlocal.h>
 #include "common/compiler_util.h" // IWYU pragma: keep
 #include "common/config.h"
+#include "common/sync_point.h"
 #include "io/cache/block_file_cache_factory.h"
 #include "io/cache/block_file_cache_manager.h"
 #include "io/cache/file_block.h"
@@ -77,16 +78,17 @@ Status CachedRemoteFileReader::close() {
 
 std::pair<size_t, size_t> CachedRemoteFileReader::_align_size(size_t offset,
                                                               size_t read_size) const {
-    size_t block_size =
-            std::min(std::max(read_size, (size_t)config::file_cache_min_file_block_size),
-                     (size_t)config::file_cache_max_file_block_size);
-    block_size = BitUtil::next_power_of_two(block_size);
     size_t left = offset;
     size_t right = offset + read_size - 1;
-    size_t align_left = (left / block_size) * block_size;
-    size_t align_right = (right / block_size + 1) * block_size;
+    size_t align_left = (left / FILE_CACHE_MAX_FILE_BLOCK_SIZE) * FILE_CACHE_MAX_FILE_BLOCK_SIZE;
+    size_t align_right =
+            (right / FILE_CACHE_MAX_FILE_BLOCK_SIZE + 1) * FILE_CACHE_MAX_FILE_BLOCK_SIZE;
     align_right = align_right < size() ? align_right : size();
     size_t align_size = align_right - align_left;
+    if (align_size < FILE_CACHE_MAX_FILE_BLOCK_SIZE && align_left != 0) {
+        align_size += FILE_CACHE_MAX_FILE_BLOCK_SIZE;
+        align_left -= FILE_CACHE_MAX_FILE_BLOCK_SIZE;
+    }
     return std::make_pair(align_left, align_size);
 }
 
@@ -104,6 +106,7 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
             block->get_or_set_downloader();
             if (block->is_downloader()) {
                 empty_blocks.push_back(block);
+                TEST_SYNC_POINT_CALLBACK("CachedRemoteFileReader::EMPTY");
             }
             stats.hit_cache = false;
             break;
@@ -139,8 +142,13 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
             SCOPED_RAW_TIMER(&stats.local_write_timer);
             char* cur_ptr = buffer.get() + block->range().left - empty_start;
             size_t block_size = block->range().size();
-            RETURN_IF_ERROR(block->append(Slice(cur_ptr, block_size)));
-            RETURN_IF_ERROR(block->finalize());
+            Status st = block->append(Slice(cur_ptr, block_size));
+            if (st.ok()) {
+                st = block->finalize();
+            }
+            if (!st.ok()) {
+                LOG_WARNING("Write data to file cache failed").error(st);
+            }
             stats.bytes_write_into_file_cache += block_size;
         }
         // copy from memory directly
@@ -176,20 +184,22 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
         }
         FileBlock::State block_state = block->state();
         int64_t wait_time = 0;
-        static int64_t MAX_WAIT_TIME = 10;
+        static int64_t max_wait_time = 10;
+        TEST_SYNC_POINT_CALLBACK("CachedRemoteFileReader::max_wait_time", &max_wait_time);
         if (block_state != FileBlock::State::DOWNLOADED) {
             do {
                 {
                     SCOPED_RAW_TIMER(&stats.remote_read_timer);
+                    TEST_SYNC_POINT_CALLBACK("CachedRemoteFileReader::DOWNLOADING");
                     block_state = block->wait();
                 }
                 if (block_state != FileBlock::State::DOWNLOADING) {
                     break;
                 }
-            } while (++wait_time < MAX_WAIT_TIME);
+            } while (++wait_time < max_wait_time);
         }
-        if (wait_time == MAX_WAIT_TIME) [[unlikely]] {
-            return Status::IOError("Waiting too long for the download to complete");
+        if (wait_time == max_wait_time) [[unlikely]] {
+            LOG_WARNING("Waiting too long for the download to complete");
         }
         {
             Status st;
@@ -202,9 +212,9 @@ Status CachedRemoteFileReader::_read_from_cache(size_t offset, size_t bytes_req,
                 size_t file_offset = current_offset - left;
                 SCOPED_RAW_TIMER(&stats.local_read_timer);
                 st = block->read(Slice(result.data + (current_offset - offset), read_size),
-                                    file_offset);
+                                 file_offset);
             }
-            if (!st || block_state == FileBlock::State::EMPTY) {
+            if (!st || block_state != FileBlock::State::DOWNLOADED) {
                 size_t bytes_read {0};
                 stats.hit_cache = false;
                 SCOPED_RAW_TIMER(&stats.remote_read_timer);
@@ -229,7 +239,7 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
     DCHECK(io_ctx);
     if (offset > size()) {
         return Status::IOError(
-                fmt::format("offset exceeds file size(offset: {), file size: {}, path: {})", offset,
+                fmt::format("offset exceeds file size(offset: {}, file size: {}, path: {})", offset,
                             size(), path().native()));
     }
     size_t bytes_req = result.size;
@@ -238,24 +248,7 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
         *bytes_read = 0;
         return Status::OK();
     }
-    Status cache_st = _read_from_cache(offset, bytes_req, result, bytes_read, io_ctx);
-    if (!cache_st.ok()) [[unlikely]] {
-        if (config::file_cache_wait_sec_after_fail > 0) {
-            // only for debug, wait and retry to load data from file cache
-            // return error if failed again
-            LOG(WARNING) << "Failed to read data from file cache, and wait "
-                         << config::file_cache_wait_sec_after_fail
-                         << " seconds to reload data: " << cache_st.to_string();
-            sleep(config::file_cache_wait_sec_after_fail);
-            cache_st = _read_from_cache(offset, bytes_req, result, bytes_read, io_ctx);
-        } else {
-            // fail over to remote file reader, and return the status of remote read
-            LOG(WARNING) << "Failed to read data from file cache, and fail over to remote file: "
-                         << cache_st.to_string();
-            return _remote_file_reader->read_at(offset, result, bytes_read, io_ctx);
-        }
-    }
-    return cache_st;
+    return _read_from_cache(offset, bytes_req, result, bytes_read, io_ctx);
 }
 
 void CachedRemoteFileReader::_update_state(const ReadStatistics& read_stats,

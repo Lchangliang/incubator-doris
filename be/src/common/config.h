@@ -1017,8 +1017,7 @@ DECLARE_Int64(file_cache_min_file_block_size);
 DECLARE_Int64(file_cache_max_file_block_size);
 DECLARE_Bool(clear_file_cache);
 DECLARE_Bool(enable_file_cache_query_limit);
-// only for debug, will be removed after finding out the root cause
-DECLARE_mInt32(file_cache_wait_sec_after_fail); // zero for no waiting and retrying
+
 // default enter disk resource limit mode 5%
 DECLARE_Int32(file_cache_enter_disk_resource_limit_mode_percent);
 // default exit disk resource limit mode 20%

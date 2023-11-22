@@ -24,7 +24,9 @@
 
 #include <chrono> // IWYU pragma: keep
 
+#include "common/config.h"
 #include "common/logging.h"
+#include "common/sync_point.h"
 #include "io/cache/file_block.h"
 #include "io/cache/file_cache_utils.h"
 #include "io/cache/fs_file_cache_storage.h"
@@ -188,18 +190,6 @@ Status BlockFileCacheManager::initialize_unlocked(std::lock_guard<doris::Mutex>&
     return Status::OK();
 }
 
-Status BlockFileCacheManager::reinitialize() {
-    std::lock_guard cache_lock(_mutex);
-    _files.clear();
-    _time_to_key.clear();
-    _key_to_time.clear();
-    _normal_queue.remove_all(cache_lock);
-    _index_queue.remove_all(cache_lock);
-    _disposable_queue.remove_all(cache_lock);
-
-    return initialize_unlocked(cache_lock);
-}
-
 void BlockFileCacheManager::use_cell(const FileBlockCell& cell, FileBlocks* result,
                                      bool move_iter_flag,
                                      std::lock_guard<doris::Mutex>& cache_lock) {
@@ -216,11 +206,13 @@ void BlockFileCacheManager::use_cell(const FileBlockCell& cell, FileBlocks* resu
         }
     }
     cell.update_atime();
+    cell.is_deleted = false;
 }
 
-BlockFileCacheManager::FileBlockCell* BlockFileCacheManager::get_cell(
-        const UInt128Wrapper& hash, size_t offset,
-        std::lock_guard<doris::Mutex>& /* cache_lock */) {
+template <class T>
+    requires IsXLock<T>
+BlockFileCacheManager::FileBlockCell* BlockFileCacheManager::get_cell(const UInt128Wrapper& hash, size_t offset,
+                                                        T& /* cache_lock */) {
     auto it = _files.find(hash);
     if (it == _files.end()) {
         return nullptr;
@@ -236,7 +228,7 @@ BlockFileCacheManager::FileBlockCell* BlockFileCacheManager::get_cell(
 }
 
 bool BlockFileCacheManager::need_to_move(FileCacheType cell_type, FileCacheType query_type) const {
-    return query_type != FileCacheType::DISPOSABLE || cell_type == FileCacheType::DISPOSABLE;
+    return query_type != FileCacheType::DISPOSABLE && cell_type != FileCacheType::DISPOSABLE;
 }
 
 FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const CacheContext& context,
@@ -266,9 +258,10 @@ FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const Cac
     // change to ttl if the blocks aren't ttl
     if (context.cache_type == FileCacheType::TTL && _key_to_time.find(hash) == _key_to_time.end()) {
         for (auto& [_, cell] : file_blocks) {
+            FileCacheType origin_type = cell.file_block->cache_type();
             Status st = cell.file_block->change_cache_type_by_mgr(FileCacheType::TTL);
             if (st.ok()) {
-                auto& queue = get_queue(cell.file_block->cache_type());
+                auto& queue = get_queue(origin_type);
                 queue.remove(cell.queue_iterator.value(), cache_lock);
                 cell.queue_iterator.reset();
                 st = cell.file_block->update_expiration_time(context.expiration_time);
@@ -281,7 +274,7 @@ FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const Cac
         _time_to_key.insert(std::make_pair(context.expiration_time, hash));
     }
     if (auto iter = _key_to_time.find(hash);
-        context.cache_type == FileCacheType::TTL && context.expiration_time != 0 &&
+        (context.cache_type == FileCacheType::NORMAL || context.cache_type == FileCacheType::TTL) &&
         iter != _key_to_time.end() && iter->second != context.expiration_time) {
         // remove from _time_to_key
         auto _time_to_key_iter = _time_to_key.equal_range(iter->second);
@@ -292,14 +285,26 @@ FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const Cac
             }
             _time_to_key_iter.first++;
         }
-        _time_to_key.insert(std::make_pair(context.expiration_time, hash));
         for (auto& [_, cell] : file_blocks) {
             Status st = cell.file_block->update_expiration_time(context.expiration_time);
             if (!st.ok()) {
                 LOG_WARNING("Failed to change key meta").error(st);
             }
         }
-        iter->second = context.expiration_time;
+        if (context.expiration_time == 0) {
+            for (auto& [_, cell] : file_blocks) {
+                if (cell.file_block->change_cache_type_by_mgr(FileCacheType::NORMAL)) {
+                    auto& queue = get_queue(FileCacheType::NORMAL);
+                    cell.queue_iterator =
+                            queue.add(cell.file_block->get_hash_value(), cell.file_block->offset(),
+                                      cell.file_block->range().size(), cache_lock);
+                }
+            }
+            _key_to_time.erase(iter);
+        } else {
+            _time_to_key.insert(std::make_pair(context.expiration_time, hash));
+            iter->second = context.expiration_time;
+        }
     }
 
     FileBlocks result;
@@ -356,6 +361,87 @@ FileBlocks BlockFileCacheManager::get_impl(const UInt128Wrapper& hash, const Cac
     }
 
     return result;
+}
+
+void BlockFileCacheManager::clear_file_cache_async() {
+    {
+        std::lock_guard cache_lock(_mutex);
+        if (!_async_clear_file_cache) {
+            for (auto& [_, offset_to_cell] : _files) {
+                for (auto& [_, cell] : offset_to_cell) {
+                    if (cell.releasable()) {
+                        cell.is_deleted = true;
+                    }
+                }
+            }
+            _async_clear_file_cache = true;
+        }
+    }
+    TEST_SYNC_POINT_CALLBACK("BlockFileCacheManager::recycle_deleted_blocks");
+}
+
+void BlockFileCacheManager::recycle_deleted_blocks() {
+    std::unique_lock cache_lock(_mutex);
+    if (_async_clear_file_cache) {
+        auto remove_file_block = [&cache_lock, this](FileBlockCell* cell) {
+            std::lock_guard segment_lock(cell->file_block->_mutex);
+            remove(cell->file_block, cache_lock, segment_lock);
+        };
+        static int remove_batch = 100;
+        TEST_SYNC_POINT_CALLBACK("BlockFileCacheManager::set_remove_batch", &remove_batch);
+        int i = 0;
+        std::condition_variable cond;
+        auto iter_queue = [&](LRUQueue& queue) {
+            bool end = false;
+            while (queue.get_total_cache_size(cache_lock) != 0 && !end) {
+                std::vector<FileBlockCell*> cells;
+                for (const auto& [entry_key, entry_offset, _] : queue) {
+                    if (i == remove_batch) {
+                        i = 0;
+                        break;
+                    }
+                    auto* cell = get_cell(entry_key, entry_offset, cache_lock);
+                    if (!cell->is_deleted) {
+                        end = true;
+                        break;
+                    }
+                    i++;
+                    cells.push_back(cell);
+                }
+                std::for_each(cells.begin(), cells.end(), remove_file_block);
+                // just for sleep
+                cond.wait_for(cache_lock, std::chrono::microseconds(100));
+            }
+        };
+        iter_queue(get_queue(FileCacheType::DISPOSABLE));
+        iter_queue(get_queue(FileCacheType::NORMAL));
+        iter_queue(get_queue(FileCacheType::INDEX));
+        std::vector<UInt128Wrapper> ttl_keys;
+        ttl_keys.reserve(_key_to_time.size());
+        for (auto& [key, _] : _key_to_time) {
+            ttl_keys.push_back(key);
+        }
+        for (UInt128Wrapper& hash : ttl_keys) {
+            if (i >= remove_batch) {
+                // just for sleep
+                cond.wait_for(cache_lock, std::chrono::microseconds(100));
+                i = 0;
+            }
+            if (auto iter = _files.find(hash); iter != _files.end()) {
+                std::vector<FileBlockCell*> cells;
+                cells.reserve(iter->second.size());
+                for (auto& [_, cell] : iter->second) {
+                    if (!cell.is_deleted) {
+                        continue;
+                    }
+                    cells.emplace_back(&cell);
+                    i++;
+                }
+                std::for_each(cells.begin(), cells.end(), remove_file_block);
+            }
+        }
+        _async_clear_file_cache = false;
+    }
 }
 
 FileBlocks BlockFileCacheManager::split_range_into_cells(
@@ -578,7 +664,10 @@ bool BlockFileCacheManager::try_reserve_for_ttl(size_t size,
                                                 std::lock_guard<doris::Mutex>& cache_lock) {
     size_t removed_size = 0;
     size_t cur_cache_size = _cur_cache_size;
-    auto is_overflow = [&] { return cur_cache_size + size - removed_size > _total_size; };
+    auto is_overflow = [&] {
+        return _disk_resource_limit_mode ? removed_size < size
+                                         : cur_cache_size + size - removed_size > _total_size;
+    };
     auto remove_file_block_if = [&](FileBlockCell* cell) {
         FileBlockSPtr file_block = cell->file_block;
         if (file_block) {
@@ -593,7 +682,6 @@ bool BlockFileCacheManager::try_reserve_for_ttl(size_t size,
         index_queue_size == 0) {
         return false;
     }
-    std::vector<FileBlockCell*> trash;
     std::vector<FileBlockCell*> to_evict;
     auto collect_eliminate_fragments = [&](LRUQueue& queue) {
         for (const auto& [entry_key, entry_offset, entry_size] : queue) {
@@ -617,20 +705,8 @@ bool BlockFileCacheManager::try_reserve_for_ttl(size_t size,
             auto& file_block = cell->file_block;
 
             std::lock_guard block_lock(file_block->_mutex);
-
-            switch (file_block->_download_state) {
-            case FileBlock::State::DOWNLOADED: {
-                /// Cell will actually be removed only if
-                /// we managed to reserve enough space.
-
-                to_evict.push_back(cell);
-                break;
-            }
-            default: {
-                trash.push_back(cell);
-                break;
-            }
-            }
+            DCHECK(file_block->_download_state == FileBlock::State::DOWNLOADED);
+            to_evict.push_back(cell);
             removed_size += cell_size;
         }
     };
@@ -643,7 +719,6 @@ bool BlockFileCacheManager::try_reserve_for_ttl(size_t size,
     if (index_queue_size != 0) {
         collect_eliminate_fragments(get_queue(FileCacheType::INDEX));
     }
-    std::for_each(trash.begin(), trash.end(), remove_file_block_if);
     std::for_each(to_evict.begin(), to_evict.end(), remove_file_block_if);
     if (is_overflow()) {
         return false;
@@ -694,20 +769,22 @@ bool BlockFileCacheManager::try_reserve(const UInt128Wrapper& hash, const CacheC
                                .count();
     auto& queue = get_queue(context.cache_type);
     size_t removed_size = 0;
+    size_t ghost_remove_size = 0;
     size_t queue_size = queue.get_total_cache_size(cache_lock);
     size_t cur_cache_size = _cur_cache_size;
     size_t query_context_cache_size = query_context->get_cache_size(cache_lock);
 
     std::vector<BlockFileCacheManager::LRUQueue::Iterator> ghost;
-    std::vector<FileBlockCell*> trash;
     std::vector<FileBlockCell*> to_evict;
 
     size_t max_size = queue.get_max_size();
     auto is_overflow = [&] {
-        return cur_cache_size + size - removed_size > _total_size ||
-               (queue_size + size - removed_size > max_size) ||
-               (query_context_cache_size + size - removed_size >
-                query_context->get_max_cache_size());
+        return _disk_resource_limit_mode ? removed_size < size
+                                         : cur_cache_size + size - removed_size > _total_size ||
+                                                   (queue_size + size - removed_size > max_size) ||
+                                                   (query_context_cache_size + size -
+                                                            (removed_size + ghost_remove_size) >
+                                                    query_context->get_max_cache_size());
     };
 
     /// Select the cache from the LRU queue held by query for expulsion.
@@ -722,7 +799,7 @@ bool BlockFileCacheManager::try_reserve(const UInt128Wrapper& hash, const CacheC
             /// The cache corresponding to this record may be swapped out by
             /// other queries, so it has become invalid.
             ghost.push_back(iter);
-            removed_size += iter->size;
+            ghost_remove_size += iter->size;
         } else {
             size_t cell_size = cell->size();
             DCHECK(iter->size == cell_size);
@@ -730,17 +807,8 @@ bool BlockFileCacheManager::try_reserve(const UInt128Wrapper& hash, const CacheC
             if (cell->releasable()) {
                 auto& file_block = cell->file_block;
                 std::lock_guard block_lock(file_block->_mutex);
-
-                switch (file_block->_download_state) {
-                case FileBlock::State::DOWNLOADED: {
-                    to_evict.push_back(cell);
-                    break;
-                }
-                default: {
-                    trash.push_back(cell);
-                    break;
-                }
-                }
+                DCHECK(file_block->_download_state == FileBlock::State::DOWNLOADED);
+                to_evict.push_back(cell);
                 removed_size += cell_size;
             }
         }
@@ -759,7 +827,6 @@ bool BlockFileCacheManager::try_reserve(const UInt128Wrapper& hash, const CacheC
         query_context->remove(iter->hash, iter->offset, cache_lock);
     }
 
-    std::for_each(trash.begin(), trash.end(), remove_file_block_if);
     std::for_each(to_evict.begin(), to_evict.end(), remove_file_block_if);
 
     if (is_overflow() &&
@@ -879,9 +946,11 @@ bool BlockFileCacheManager::try_reserve_from_other_queue(
     auto other_cache_types = get_other_cache_type(cur_cache_type);
     size_t removed_size = 0;
     size_t cur_cache_size = _cur_cache_size;
-    auto is_overflow = [&] { return cur_cache_size + size - removed_size > _total_size; };
+    auto is_overflow = [&] {
+        return _disk_resource_limit_mode ? removed_size < size
+                                         : cur_cache_size + size - removed_size > _total_size;
+    };
     std::vector<FileBlockCell*> to_evict;
-    std::vector<FileBlockCell*> trash;
     for (FileCacheType cache_type : other_cache_types) {
         auto& queue = get_queue(cache_type);
         for (const auto& [entry_key, entry_offset, entry_size] : queue) {
@@ -901,20 +970,9 @@ bool BlockFileCacheManager::try_reserve_from_other_queue(
 
             if (cell->releasable()) {
                 auto& file_block = cell->file_block;
-
                 std::lock_guard block_lock(file_block->_mutex);
-
-                switch (file_block->_download_state) {
-                case FileBlock::State::DOWNLOADED: {
-                    to_evict.push_back(cell);
-                    break;
-                }
-                default: {
-                    trash.push_back(cell);
-                    break;
-                }
-                }
-
+                DCHECK(file_block->_download_state == FileBlock::State::DOWNLOADED);
+                to_evict.push_back(cell);
                 removed_size += cell_size;
             }
         }
@@ -927,7 +985,6 @@ bool BlockFileCacheManager::try_reserve_from_other_queue(
         }
     };
 
-    std::for_each(trash.begin(), trash.end(), remove_file_block_if);
     std::for_each(to_evict.begin(), to_evict.end(), remove_file_block_if);
 
     if (is_overflow()) {
@@ -955,13 +1012,14 @@ bool BlockFileCacheManager::try_reserve_for_lru(const UInt128Wrapper& hash,
         size_t max_size = queue.get_max_size();
         size_t max_element_size = queue.get_max_element_size();
         auto is_overflow = [&] {
-            return cur_cache_size + size - removed_size > _total_size ||
-                   (queue_size + size - removed_size > max_size) ||
-                   queue_element_size >= max_element_size;
+            return _disk_resource_limit_mode
+                           ? removed_size < size
+                           : cur_cache_size + size - removed_size > _total_size ||
+                                     (queue_size + size - removed_size > max_size) ||
+                                     queue_element_size >= max_element_size;
         };
 
         std::vector<FileBlockCell*> to_evict;
-        std::vector<FileBlockCell*> trash;
         for (const auto& [entry_key, entry_offset, entry_size] : queue) {
             if (!is_overflow()) {
                 break;
@@ -978,20 +1036,8 @@ bool BlockFileCacheManager::try_reserve_for_lru(const UInt128Wrapper& hash,
                 auto& file_block = cell->file_block;
 
                 std::lock_guard block_lock(file_block->_mutex);
-
-                switch (file_block->_download_state) {
-                case FileBlock::State::DOWNLOADED: {
-                    /// Cell will actually be removed only if
-                    /// we managed to reserve enough space.
-
-                    to_evict.push_back(cell);
-                    break;
-                }
-                default: {
-                    trash.push_back(cell);
-                    break;
-                }
-                }
+                DCHECK(file_block->_download_state == FileBlock::State::DOWNLOADED);
+                to_evict.push_back(cell);
 
                 removed_size += cell_size;
                 --queue_element_size;
@@ -1006,7 +1052,6 @@ bool BlockFileCacheManager::try_reserve_for_lru(const UInt128Wrapper& hash,
             }
         };
 
-        std::for_each(trash.begin(), trash.end(), remove_file_block_if);
         std::for_each(to_evict.begin(), to_evict.end(), remove_file_block_if);
 
         if (is_overflow()) {
@@ -1020,9 +1065,9 @@ bool BlockFileCacheManager::try_reserve_for_lru(const UInt128Wrapper& hash,
     return true;
 }
 
-void BlockFileCacheManager::remove(FileBlockSPtr file_block,
-                                   std::lock_guard<doris::Mutex>& cache_lock,
-                                   std::lock_guard<doris::Mutex>& block_lock) {
+template <class T, class U>
+    requires IsXLock<T> && IsXLock<U>
+void BlockFileCacheManager::remove(FileBlockSPtr file_block, T& cache_lock, U& block_lock) {
     auto hash = file_block->get_hash_value();
     auto offset = file_block->offset();
     auto type = file_block->cache_type();
@@ -1114,8 +1159,9 @@ BlockFileCacheManager::LRUQueue::Iterator BlockFileCacheManager::LRUQueue::add(
     return iter;
 }
 
-void BlockFileCacheManager::LRUQueue::remove(Iterator queue_it,
-                                             std::lock_guard<doris::Mutex>& /* cache_lock */) {
+template <class T>
+    requires IsXLock<T>
+void BlockFileCacheManager::LRUQueue::remove(Iterator queue_it, T& /* cache_lock */) {
     cache_size -= queue_it->size;
     map.erase(std::make_pair(queue_it->hash, queue_it->offset));
     queue.erase(queue_it);
@@ -1218,26 +1264,39 @@ void BlockFileCacheManager::check_disk_resource_limit(const std::string& path) {
     std::pair<int, int> percent;
     int ret = disk_used_percentage(path, &percent);
     if (ret != 0) {
-        LOG_WARNING("").tag("file cache path", path).tag("error", strerror(errno));
+        LOG_ERROR("").tag("file cache path", path).tag("error", strerror(errno));
         return;
     }
-    auto [capacity_percentage, inode_remain_percentage] = percent;
+    auto [capacity_percentage, inode_percentage] = percent;
+    auto inode_is_insufficient = [](const int& inode_remain) {
+        return inode_remain >= config::file_cache_enter_disk_resource_limit_mode_percent;
+    };
     DCHECK(capacity_percentage >= 0 && capacity_percentage <= 100);
-    DCHECK(inode_remain_percentage >= 0 && inode_remain_percentage <= 100);
-    if (((100 - capacity_percentage) < config::file_cache_enter_disk_resource_limit_mode_percent) ||
-        (inode_remain_percentage < config::file_cache_enter_disk_resource_limit_mode_percent)) {
+    DCHECK(inode_percentage >= 0 && inode_percentage <= 100);
+    // ATTN: due to that can be change, so if its invalid, set it to default value
+    if (config::file_cache_enter_disk_resource_limit_mode_percent <=
+        config::file_cache_exit_disk_resource_limit_mode_percent) {
+        LOG_WARNING("config error, set to default value")
+                .tag("enter", config::file_cache_enter_disk_resource_limit_mode_percent)
+                .tag("exit", config::file_cache_exit_disk_resource_limit_mode_percent);
+        config::file_cache_enter_disk_resource_limit_mode_percent = 90;
+        config::file_cache_exit_disk_resource_limit_mode_percent = 80;
+    }
+    if (capacity_percentage >= config::file_cache_enter_disk_resource_limit_mode_percent ||
+        inode_is_insufficient(inode_percentage)) {
+        LOG(WARNING) << capacity_percentage << " "
+                  << config::file_cache_enter_disk_resource_limit_mode_percent;
         _disk_resource_limit_mode = true;
     } else if (_disk_resource_limit_mode &&
-               ((100 - capacity_percentage) >
-                config::file_cache_exit_disk_resource_limit_mode_percent) &&
-               (inode_remain_percentage >
-                config::file_cache_exit_disk_resource_limit_mode_percent)) {
+               (capacity_percentage < config::file_cache_exit_disk_resource_limit_mode_percent) &&
+               (inode_percentage < config::file_cache_exit_disk_resource_limit_mode_percent)) {
         _disk_resource_limit_mode = false;
     }
     if (_disk_resource_limit_mode) {
         LOG_WARNING("file cache background thread")
-                .tag("remain space percent", 100 - capacity_percentage)
-                .tag("remain inode percent", inode_remain_percentage)
+                .tag("space percent", capacity_percentage)
+                .tag("inode percent", inode_percentage)
+                .tag("is inode insufficient", inode_is_insufficient(inode_percentage))
                 .tag("mode", "run in resource limit");
     }
 }
@@ -1245,6 +1304,8 @@ void BlockFileCacheManager::check_disk_resource_limit(const std::string& path) {
 void BlockFileCacheManager::run_background_operation() {
     int64_t interval_time_seconds = 20;
     while (!_close) {
+        TEST_SYNC_POINT_CALLBACK("BlockFileCacheManager::set_sleep_time", &interval_time_seconds);
+        check_disk_resource_limit(_cache_base_path);
         {
             std::unique_lock close_lock(_close_mtx);
             if (_close) {
@@ -1259,7 +1320,7 @@ void BlockFileCacheManager::run_background_operation() {
                 break;
             }
         }
-        check_disk_resource_limit(_cache_base_path);
+        recycle_deleted_blocks();
         // gc
         int64_t cur_time = UnixSeconds();
         std::lock_guard cache_lock(_mutex);
@@ -1324,9 +1385,10 @@ void BlockFileCacheManager::modify_expiration_time(const UInt128Wrapper& hash,
     // 3. change to ttl if the blocks aren't ttl
     if (auto iter = _files.find(hash); iter != _files.end()) {
         for (auto& [_, cell] : iter->second) {
+            FileCacheType origin_type = cell.file_block->cache_type();
             auto st = cell.file_block->change_cache_type_by_mgr(FileCacheType::TTL);
             if (st.ok()) {
-                auto& queue = get_queue(cell.file_block->cache_type());
+                auto& queue = get_queue(origin_type);
                 queue.remove(cell.queue_iterator.value(), cache_lock);
                 cell.queue_iterator.reset();
                 st = cell.file_block->update_expiration_time(new_expiration_time);
@@ -1378,11 +1440,10 @@ bool BlockFileCacheManager::try_reserve_for_lazy_load(size_t size,
     size_t disposable_queue_size = _disposable_queue.get_total_cache_size(cache_lock);
     size_t index_queue_size = _index_queue.get_total_cache_size(cache_lock);
 
-    std::vector<FileBlockCell*> trash;
     std::vector<FileBlockCell*> to_evict;
     auto collect_eliminate_fragments = [&](LRUQueue& queue) {
         for (const auto& [entry_key, entry_offset, entry_size] : queue) {
-            if (removed_size >= size) {
+            if (!_disk_resource_limit_mode || removed_size >= size) {
                 break;
             }
             auto* cell = get_cell(entry_key, entry_offset, cache_lock);
@@ -1402,20 +1463,8 @@ bool BlockFileCacheManager::try_reserve_for_lazy_load(size_t size,
             auto& file_block = cell->file_block;
 
             std::lock_guard block_lock(file_block->_mutex);
-
-            switch (file_block->_download_state) {
-            case FileBlock::State::DOWNLOADED: {
-                /// Cell will actually be removed only if
-                /// we managed to reserve enough space.
-
-                to_evict.push_back(cell);
-                break;
-            }
-            default: {
-                trash.push_back(cell);
-                break;
-            }
-            }
+            DCHECK(file_block->_download_state == FileBlock::State::DOWNLOADED);
+            to_evict.push_back(cell);
             removed_size += cell_size;
         }
     };
@@ -1428,10 +1477,9 @@ bool BlockFileCacheManager::try_reserve_for_lazy_load(size_t size,
     if (index_queue_size != 0) {
         collect_eliminate_fragments(get_queue(FileCacheType::INDEX));
     }
-    std::for_each(trash.begin(), trash.end(), remove_file_block_if);
     std::for_each(to_evict.begin(), to_evict.end(), remove_file_block_if);
 
-    return removed_size >= size;
+    return !_disk_resource_limit_mode || removed_size >= size;
 }
 
 } // namespace doris::io

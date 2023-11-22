@@ -188,6 +188,7 @@ Status ExecEnv::_init(const std::vector<StorePath>& store_paths) {
             .set_max_threads(std::numeric_limits<int>::max())
             .set_max_queue_size(config::fragment_pool_queue_size)
             .build(&_join_node_thread_pool);
+    _file_cache_factory = new io::FileCacheFactory();
     init_file_cache_factory();
     RETURN_IF_ERROR(init_pipeline_task_scheduler());
     _task_group_manager = new taskgroup::TaskGroupManager();

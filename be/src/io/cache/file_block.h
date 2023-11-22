@@ -77,10 +77,6 @@ public:
 
         Range(size_t left, size_t right) : left(left), right(right) {}
 
-        bool operator==(const Range& other) const {
-            return left == other.left && right == other.right;
-        }
-
         [[nodiscard]] size_t size() const { return right - left + 1; }
 
         [[nodiscard]] std::string to_string() const {
@@ -135,7 +131,6 @@ public:
 
 private:
     std::string get_info_for_log_impl(std::lock_guard<std::mutex>& block_lock) const;
-    bool has_finalized_state() const;
 
     [[nodiscard]] Status set_downloaded(std::lock_guard<std::mutex>& block_lock);
     bool is_downloader_impl(std::lock_guard<std::mutex>& block_lock) const;
@@ -174,7 +169,6 @@ struct FileBlocksHolder {
     ~FileBlocksHolder();
 
     FileBlocks file_blocks;
-    std::string to_string();
 };
 
 using FileBlocksHolderPtr = std::unique_ptr<FileBlocksHolder>;
