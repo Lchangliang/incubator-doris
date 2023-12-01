@@ -19,10 +19,12 @@
 
 #include <gen_cpp/olap_file.pb.h>
 
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 
+#include "olap/storage_engine.h"
 #include "olap/tablet_schema.h"
 #include "runtime/exec_env.h"
 #include "util/doris_metrics.h"
@@ -56,9 +58,12 @@ private:
 
 private:
     std::mutex _mtx;
+    std::condition_variable _cond;
     std::unordered_map<std::string, TabletSchemaSPtr> _cache;
-    std::atomic_bool _should_stop = {false};
-    std::atomic_bool _is_stopped = {false};
+    bool _stop = {false};
+    std::thread _recycle_thread;
+    std::shared_ptr<MemTracker> _tablet_meta_mem_tracker =
+            StorageEngine::instance()->tablet_schema_mem_tracker();
 };
 
 } // namespace doris

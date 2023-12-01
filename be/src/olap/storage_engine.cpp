@@ -71,6 +71,7 @@
 #include "olap/task/engine_task.h"
 #include "olap/txn_manager.h"
 #include "runtime/memory/mem_tracker.h"
+#include "runtime/memory/mem_tracker_limiter.h"
 #include "runtime/stream_load/stream_load_recorder.h"
 #include "util/doris_metrics.h"
 #include "util/metrics.h"
@@ -118,6 +119,7 @@ StorageEngine::StorageEngine(const EngineOptions& options)
           _stopped(false),
           _segcompaction_mem_tracker(std::make_shared<MemTracker>("SegCompaction")),
           _segment_meta_mem_tracker(std::make_shared<MemTracker>("SegmentMeta")),
+          _tablet_schema_mem_tracker(std::make_shared<MemTrackerLimiter>("TabletSchema")),
           _stop_background_threads_latch(1),
           _tablet_manager(new TabletManager(config::tablet_map_shard_size)),
           _txn_manager(new TxnManager(config::txn_map_shard_size, config::txn_shard_size)),

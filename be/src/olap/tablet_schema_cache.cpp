@@ -31,21 +31,25 @@ TabletSchemaSPtr TabletSchemaCache::insert(const std::string& key) {
         DorisMetrics::instance()->tablet_schema_cache_count->increment(1);
         DorisMetrics::instance()->tablet_schema_cache_memory_bytes->increment(
                 tablet_schema_ptr->mem_size());
+        _tablet_meta_mem_tracker->consume(tablet_schema_ptr->mem_size());
         return tablet_schema_ptr;
     }
     return iter->second;
 }
 
 void TabletSchemaCache::start() {
-    std::thread t(&TabletSchemaCache::_recycle, this);
-    t.detach();
+    _recycle_thread = std::thread(&TabletSchemaCache::_recycle, this);
     LOG(INFO) << "TabletSchemaCache started";
 }
 
 void TabletSchemaCache::stop() {
-    _should_stop = true;
-    while (!_is_stopped) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    {
+        std::lock_guard guard(_mtx);
+        _stop = true;
+    }
+    _cond.notify_all();
+    if (_recycle_thread.joinable()) {
+        _recycle_thread.join();
     }
     LOG(INFO) << "TabletSchemaCache stopped";
 }
@@ -54,31 +58,25 @@ void TabletSchemaCache::stop() {
  * @brief recycle when TabletSchemaSPtr use_count equals 1.
  */
 void TabletSchemaCache::_recycle() {
-    int64_t check_interval = 5;
-    int64_t left_second = config::tablet_schema_cache_recycle_interval;
-    while (!_should_stop) {
-        if (left_second > 0) {
-            std::this_thread::sleep_for(std::chrono::seconds(check_interval));
-            left_second -= check_interval;
-            continue;
-        } else {
-            left_second = config::tablet_schema_cache_recycle_interval;
+    std::unique_lock lock(_mtx);
+    while (!_stop) {
+        _cond.wait_for(lock, std::chrono::seconds(config::tablet_schema_cache_recycle_interval));
+        if (_stop) {
+            break;
         }
-
-        std::lock_guard guard(_mtx);
         LOG(INFO) << "Tablet Schema Cache Capacity " << _cache.size();
         for (auto iter = _cache.begin(), last = _cache.end(); iter != last;) {
             if (iter->second.unique()) {
                 DorisMetrics::instance()->tablet_schema_cache_memory_bytes->increment(
                         -iter->second->mem_size());
                 DorisMetrics::instance()->tablet_schema_cache_count->increment(-1);
+                _tablet_meta_mem_tracker->release(iter->second->mem_size());
                 iter = _cache.erase(iter);
             } else {
                 ++iter;
             }
         }
     }
-    _is_stopped = true;
 }
 
 } // namespace doris

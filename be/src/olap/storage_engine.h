@@ -202,6 +202,7 @@ public:
     Status get_compaction_status_json(std::string* result);
 
     std::shared_ptr<MemTracker> segment_meta_mem_tracker() { return _segment_meta_mem_tracker; }
+    std::shared_ptr<MemTracker> tablet_schema_mem_tracker() { return _tablet_schema_mem_tracker; }
     std::shared_ptr<MemTracker> segcompaction_mem_tracker() { return _segcompaction_mem_tracker; }
 
     // check cumulative compaction config
@@ -395,7 +396,7 @@ private:
     // This mem tracker is only for tracking memory use by segment meta data such as footer or index page.
     // The memory consumed by querying is tracked in segment iterator.
     std::shared_ptr<MemTracker> _segment_meta_mem_tracker;
-
+    std::shared_ptr<MemTracker> _tablet_schema_mem_tracker;
     CountDownLatch _stop_background_threads_latch;
     scoped_refptr<Thread> _unused_rowset_monitor_thread;
     // thread to monitor snapshot expiry
