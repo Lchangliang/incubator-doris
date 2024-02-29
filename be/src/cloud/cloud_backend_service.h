@@ -34,6 +34,12 @@ public:
 
     // TODO(plat1ko): cloud backend functions
 
+    void get_top_n_hot_partitions(TGetTopNHotPartitionsResponse& response,
+                                  const TGetTopNHotPartitionsRequest& request) override;
+
+    void warm_up_tablets(TWarmUpTabletsResponse& response,
+                         const TWarmUpTabletsRequest& request) override;
+
 private:
     [[maybe_unused]] CloudStorageEngine& _engine;
 };

@@ -19,6 +19,8 @@ package org.apache.doris.cloud.catalog;
 
 import org.apache.doris.analysis.ResourceTypeEnum;
 import org.apache.doris.catalog.Env;
+import com.apache.doris.cloud.CloudWarmUpJob;
+import com.apache.doris.cloud.CloudWarmUpJob.JobState;
 import org.apache.doris.cloud.proto.Cloud;
 import org.apache.doris.cloud.proto.Cloud.NodeInfoPB;
 import org.apache.doris.cloud.system.CloudSystemInfoService;
@@ -406,5 +408,60 @@ public class CloudEnv extends Env {
 
         changeCloudCluster(res[1], ctx);
         return res[0];
+    }
+
+    public long loadCloudWarmUpJob(DataInputStream dis, long checksum) throws Exception {
+        // same as loadAlterJob
+
+        int size = dis.readInt();
+        long newChecksum = checksum ^ size;
+        if (size > 0) {
+            // There should be no old cloudWarmUp jobs, if exist throw exception, should not use this FE version
+            throw new IOException("There are [" + size + "] cloud warm up jobs."
+                    + " Please downgrade FE to an older version and handle residual jobs");
+        }
+
+        // finished or cancelled jobs
+        size = dis.readInt();
+        newChecksum ^= size;
+        if (size > 0) {
+            throw new IOException("There are [" + size + "] old finished or cancelled cloud warm up jobs."
+                    + " Please downgrade FE to an older version and handle residual jobs");
+        }
+
+        size = dis.readInt();
+        newChecksum ^= size;
+        for (int i = 0; i < size; i++) {
+            CloudWarmUpJob cloudWarmUpJob = CloudWarmUpJob.read(dis);
+            if (cloudWarmUpJob.isExpire() || cloudWarmUpJob.getJobState() == JobState.DELETED) {
+                LOG.info("cloud warm up job is expired, {}, ignore it", cloudWarmUpJob.getJobId());
+                continue;
+            }
+            this.getCacheHotspotMgr().addCloudWarmUpJob(cloudWarmUpJob);
+        }
+        LOG.info("finished replay cloud warm up job from image");
+        return newChecksum;
+    }
+
+    public long saveCloudWarmUpJob(CountingDataOutputStream dos, long checksum) throws IOException {
+        // same as saveAlterJob
+
+        Map<Long, CloudWarmUpJob> cloudWarmUpJobs;
+        cloudWarmUpJobs = this.getCacheHotspotMgr().getCloudWarmUpJobs();
+
+        int size = 0;
+        checksum ^= size;
+        dos.writeInt(size);
+
+        checksum ^= size;
+        dos.writeInt(size);
+
+        size = cloudWarmUpJobs.size();
+        checksum ^= size;
+        dos.writeInt(size);
+        for (CloudWarmUpJob cloudWarmUpJob : cloudWarmUpJobs.values()) {
+            cloudWarmUpJob.write(dos);
+        }
+        return checksum;
     }
 }
