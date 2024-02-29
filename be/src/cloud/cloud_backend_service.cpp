@@ -17,6 +17,8 @@
 
 #include "cloud/cloud_backend_service.h"
 
+#include "cloud/cloud_tablet_hotspot.h"
+#include "cloud/cloud_warm_up_manager.h"
 #include "common/config.h"
 #include "util/thrift_server.h"
 
@@ -43,6 +45,74 @@ Status CloudBackendService::create_service(CloudStorageEngine& engine, ExecEnv* 
     LOG(INFO) << "Doris CloudBackendService listening on " << port;
 
     return Status::OK();
+}
+
+void CloudBackendService::get_top_n_hot_partitions(TGetTopNHotPartitionsResponse& response,
+                                                   const TGetTopNHotPartitionsRequest& request) {
+    TabletHotspot::instance()->get_top_n_hot_partition(&response.hot_tables);
+    //     response.file_cache_size = io::FileCacheFactory::instance().get_total_cache_size();
+    response.__isset.hot_tables = !response.hot_tables.empty();
+}
+
+void CloudBackendService::warm_up_tablets(TWarmUpTabletsResponse& response,
+                                          const TWarmUpTabletsRequest& request) {
+    Status st;
+    auto* manager = CloudWarmUpManager::instance();
+    switch (request.type) {
+    case TWarmUpTabletsRequestType::SET_JOB: {
+        LOG_INFO("receive the warm up request.")
+                .tag("request_type", "SET_JOB")
+                .tag("job_id", request.job_id);
+        st = manager->check_and_set_job_id(request.job_id);
+        if (!st) {
+            LOG_WARNING("SET_JOB failed.").error(st);
+            break;
+        }
+        [[fallthrough]];
+    }
+    case TWarmUpTabletsRequestType::SET_BATCH: {
+        LOG_INFO("receive the warm up request.")
+                .tag("request_type", "SET_BATCH")
+                .tag("job_id", request.job_id)
+                .tag("batch_id", request.batch_id)
+                .tag("jobs size", request.job_metas.size());
+        bool retry = false;
+        st = manager->check_and_set_batch_id(request.job_id, request.batch_id, &retry);
+        if (!retry && st) {
+            manager->add_job(request.job_metas);
+        } else {
+            if (retry) {
+                LOG_WARNING("retry the job.")
+                        .tag("job_id", request.job_id)
+                        .tag("batch_id", request.batch_id);
+            } else {
+                LOG_WARNING("SET_BATCH failed.").error(st);
+            }
+        }
+        break;
+    }
+    case TWarmUpTabletsRequestType::GET_CURRENT_JOB_STATE_AND_LEASE: {
+        LOG_INFO("receive the warm up request.")
+                .tag("request_type", "GET_CURRENT_JOB_STATE_AND_LEASE");
+        auto [job_id, batch_id, pending_job_size, finish_job_size] =
+                manager->get_current_job_state();
+        response.__set_job_id(job_id);
+        response.__set_batch_id(batch_id);
+        response.__set_pending_job_size(pending_job_size);
+        response.__set_finish_job_size(finish_job_size);
+        break;
+    }
+    case TWarmUpTabletsRequestType::CLEAR_JOB: {
+        LOG_INFO("receive the warm up request.")
+                .tag("request_type", "CLEAR_JOB")
+                .tag("job_id", request.job_id);
+        st = manager->clear_job(request.job_id);
+        break;
+    }
+    default:
+        DCHECK(false);
+    };
+    st.to_thrift(&response.status);
 }
 
 } // namespace doris

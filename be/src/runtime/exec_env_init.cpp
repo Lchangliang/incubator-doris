@@ -35,6 +35,8 @@
 #include <vector>
 
 #include "cloud/cloud_storage_engine.h"
+#include "cloud/cloud_tablet_hotspot.h"
+#include "cloud/cloud_warm_up_manager.h"
 #include "cloud/config.h"
 #include "common/config.h"
 #include "common/logging.h"
@@ -227,6 +229,8 @@ Status ExecEnv::_init(const std::vector<StorePath>& store_paths,
     _memtable_memory_limiter = std::make_unique<MemTableMemoryLimiter>();
     _load_stream_stub_pool = std::make_unique<LoadStreamStubPool>();
     _delta_writer_v2_pool = std::make_unique<vectorized::DeltaWriterV2Pool>();
+    _tablet_hotspot = std::make_unique<TabletHotspot>();
+    _cloud_warm_up_manager = std::make_unique<CloudWarmUpManager>();
     _wal_manager = WalManager::create_shared(this, config::group_commit_wal_path);
 
     _backend_client_cache->init_metrics("backend");

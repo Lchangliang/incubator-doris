@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "cloud/cloud_warm_up_manager.h"
 #include "common/status.h"
 #include "olap/memtable_memory_limiter.h"
 #include "olap/olap_define.h"
@@ -104,6 +105,8 @@ class RowCache;
 class DummyLRUCache;
 class CacheManager;
 class WalManager;
+class TabletHotspot;
+class CloudWarmUpManager;
 
 inline bool k_doris_exit = false;
 
@@ -272,6 +275,10 @@ public:
         return _pipeline_tracer_ctx.get();
     }
 
+    TabletHotspot* tablet_totspot() { return _tablet_hotspot.get(); }
+
+    CloudWarmUpManager* cloud_warm_up_manager { return _cloud_warm_up_manager.get(); }
+
 private:
     ExecEnv();
 
@@ -385,6 +392,10 @@ private:
     RuntimeQueryStatiticsMgr* _runtime_query_statistics_mgr = nullptr;
 
     std::unique_ptr<pipeline::PipelineTracerContext> _pipeline_tracer_ctx;
+
+    std::unique_ptr<TabletHotspot> _tablet_hotspot;
+
+    std::unique_ptr<CloudWarmUpManager> _cloud_warm_up_manager;
 };
 
 template <>
