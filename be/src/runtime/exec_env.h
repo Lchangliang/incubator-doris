@@ -29,7 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "cloud/cloud_warm_up_manager.h"
+// #include "cloud/cloud_warm_up_manager.h"
 #include "common/status.h"
 #include "io/cache/fs_file_cache_storage.h"
 #include "olap/memtable_memory_limiter.h"
@@ -108,8 +108,8 @@ class RowCache;
 class DummyLRUCache;
 class CacheManager;
 class WalManager;
-class TabletHotspot;
-class CloudWarmUpManager;
+// class TabletHotspot;
+// class CloudWarmUpManager;
 
 inline bool k_doris_exit = false;
 
@@ -283,9 +283,9 @@ public:
 
     segment_v2::TmpFileDirs* get_tmp_file_dirs() { return _tmp_file_dirs.get(); }
     io::FDCache* file_cache_open_fd_cache() const { return _file_cache_open_fd_cache.get(); }
-    TabletHotspot* tablet_totspot() { return _tablet_hotspot.get(); }
+    // TabletHotspot* tablet_totspot() { return _tablet_hotspot.get(); }
 
-    CloudWarmUpManager* cloud_warm_up_manager() { return _cloud_warm_up_manager.get(); }
+    // CloudWarmUpManager* cloud_warm_up_manager() { return _cloud_warm_up_manager.get(); }
 
 private:
     ExecEnv();
@@ -408,9 +408,8 @@ private:
     std::unique_ptr<segment_v2::TmpFileDirs> _tmp_file_dirs;
     doris::vectorized::SpillStreamManager* _spill_stream_mgr = nullptr;
 
-    std::unique_ptr<TabletHotspot> _tablet_hotspot;
-
-    std::unique_ptr<CloudWarmUpManager> _cloud_warm_up_manager;
+    // std::unique_ptr<TabletHotspot> _tablet_hotspot;
+    // std::unique_ptr<CloudWarmUpManager> _cloud_warm_up_manager;
 };
 
 template <>
